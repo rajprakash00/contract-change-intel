@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-# Module-level singletons: one engine per process is the SQLAlchemy-recommended pattern.
+# Module-level singletons: one engine per process
 # init_engine/dispose_engine are owned by the app lifespan (tests call them directly because
 # httpx's ASGITransport does not run lifespan events).
 _engine: AsyncEngine | None = None
@@ -36,7 +36,6 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         yield session
 
 
-async def check_database(session: AsyncSession) -> bool:
-    result = await session.execute(text("SELECT 1"))
-    # scalar_one() comes back typed as Any from SQLAlchemy; coerce to keep the bool contract.
-    return bool(result.scalar_one())
+async def check_database(session: AsyncSession) -> None:
+    """Return quietly if Postgres answers a trivial query; raise on any failure."""
+    await session.execute(text("SELECT 1"))

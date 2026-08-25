@@ -1,5 +1,4 @@
-# Local development database only. Using the pgvector image from day one so that
-# embedding retrieval (week 3) needs no infra change later.
+# Local development database only.
 services:
   db:
     image: pgvector/pgvector:pg17
@@ -8,8 +7,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: cci
     ports:
-      # Container stays on 5432; the HOST side is 5433 because another project's
-      # Postgres (contract-intelligence) already owns host 5432 on this machine.
+      # Container stays on 5432; the HOST side is 5433 because of another project's Postgres
       - "5433:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data

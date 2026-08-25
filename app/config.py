@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     # Host port 5433 matches docker-compose.yml (host 5432 belongs to another project here).
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5433/cci"
 
+    log_level: str = "INFO"
+
 
 @lru_cache
 def get_settings() -> Settings:
