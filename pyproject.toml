@@ -1,0 +1,50 @@
+[project]
+name = "contract-change-intel"
+version = "0.1.0"
+description = "Extract obligations from agreements, explain amendment changes, and map their impact."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "asyncpg>=0.31.0",
+    "fastapi>=0.141.1",
+    "pydantic-settings>=2.15.0",
+    "sqlalchemy>=2.0.52",
+    "uvicorn[standard]>=0.52.4",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "mypy>=2.3.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.4",
+]
+
+# Not an installable package: uvicorn/pytest/mypy all run against app/ from the repo root,
+# so there is nothing to build or publish yet.
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Adds the repo root to sys.path so `import app` works without installing the project.
+pythonpath = ["."]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "RUF"]
+
+# Pragmatic strictness: catches real type errors and forces annotations on our own code,
+# without the ceremony of full `strict = true`.
+[tool.mypy]
+python_version = "3.13"
+disallow_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_return_any = true
