@@ -9,7 +9,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # Driver is explicit in the URL because SQLAlchemy picks its driver from the scheme.
-    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/cci"
+    # Host port 5433 matches docker-compose.yml (host 5432 belongs to another project here).
+    database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5433/cci"
 
 
 @lru_cache
