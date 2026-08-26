@@ -8,8 +8,7 @@ State: week 1, day 2 complete — Alembic migrations + `documents` table +
 - `app/config.py` — Settings (.env): `database_url` (host port **5433**), `data_dir`,
   `max_upload_mb`, `log_level`
 - `app/db.py` — engine/sessionmaker lifecycle owned by lifespan; `get_session` dep
-- `app/main.py` — `create_app()`; lifespan, mounts `api_router`, error handlers
-- `app/api/main.py` — aggregates route routers into one `api_router`
+- `app/main.py` — `create_app()`; lifespan, mounts route routers, error handlers
 - `app/api/deps.py` — shared deps (`SessionDep`, `SettingsDep`)
 - `app/api/routes/documents.py` — thin adapter for `POST /documents`
 - `app/api/routes/health.py` — `GET /healthz` probe

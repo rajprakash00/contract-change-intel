@@ -39,9 +39,8 @@ CI (`.github/workflows/ci.yml`) runs exactly these; the `verify` skill wraps the
 
 | Layer | Rules |
 |---|---|
-| `app/api/main.py` | Aggregates all routers into one `api_router` via `include_router`; included by `create_app()`. |
 | `app/api/deps.py` | Shared FastAPI dependencies (`SessionDep`, `SettingsDep`). |
-| `app/api/routes/` | Parse request → call service → return schema. No business rules, no try/except (probe endpoints excepted), no logging. One module per resource; handlers named verb+resource (`post_documents`). |
+| `app/api/routes/` | Parse request → call service → return schema; each module exposes a `router`, mounted by `create_app()`. No business rules, no try/except (probe endpoints excepted), no logging. One module per resource; handlers named verb+resource (`post_documents`). |
 | `app/services/`  | Business rules. Raise domain exceptions carrying no HTTP semantics. No framework types cross this boundary (pass `file.read`, not `UploadFile`). Blocking IO via `asyncio.to_thread`. |
 | `app/repositories/` | DB calls only, plain functions, one module per table, no generic base classes. |
 | `app/storage/`   | Byte persistence only; content-addressed `{data_dir}/{tenant_id}/{sha256}`. |

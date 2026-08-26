@@ -37,9 +37,8 @@ errors.py maps domain exceptions onto HTTP once, app-wide
 
 | Module       | Owns                        | Rules |
 |--------------|-----------------------------|-------|
-| `api/main.py` | router aggregation         | single `api_router` built via `include_router()`; the only thing `create_app()` mounts. |
 | `api/deps.py` | shared dependencies        | `SessionDep` etc.; imported by route modules. |
-| `api/routes/` | HTTP adapters              | parse request → call service → return schema. No business rules, no try/except, no logging. Handlers named for the verb+resource (`post_documents`). |
+| `api/routes/` | HTTP adapters              | parse request → call service → return schema. Each module exposes a `router`; `create_app()` mounts them via `include_router()`. No business rules, no try/except, no logging. Handlers named for the verb+resource (`post_documents`). |
 | `services/`  | business rules              | orchestrate repositories + storage; validation, dedupe, orchestration, audit logs. Raise domain exceptions carrying no HTTP semantics. No framework types cross this boundary (pass callables/data, not `UploadFile`). |
 | `repositories/` | persistence             | DB calls only, one module per table, plain functions — no generic base classes. |
 | `storage/`   | byte persistence            | filesystem today; swapping to object storage touches only this module. |
