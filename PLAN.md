@@ -52,6 +52,14 @@ Blocking IO (disk writes) leaves the event loop via `asyncio.to_thread`.
 Migrations are async Alembic with the URL taken from app settings so `DATABASE_URL`
 overrides behave identically for API, tests, and migrations.
 
+## Delivery approach
+
+Work runs in roughly four focused blocks per week rather than fixed calendar days;
+each block has a goal and explicit done-criteria. Planning is rolling: near-term weeks
+are specified concretely, later phases exist as feature clusters and are expanded into
+concrete blocks when earlier milestones land (first checkpoint: end of week 3, once an
+evaluation baseline exists).
+
 ## Roadmap
 
 - **W1 — Backend foundations**: FastAPI skeleton, settings, async engine, `/healthz`,

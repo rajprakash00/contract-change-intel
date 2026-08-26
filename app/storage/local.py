@@ -36,3 +36,12 @@ def save_document(data_dir: str | Path, tenant_id: uuid.UUID, sha256: str, conte
 def document_path(data_dir: str | Path, tenant_id: uuid.UUID, sha256: str) -> Path:
     """Resolve where a stored document lives; used by future download endpoints."""
     return Path(data_dir) / str(tenant_id) / sha256
+
+
+def delete_document(data_dir: str | Path, tenant_id: uuid.UUID, sha256: str) -> bool:
+    """Remove stored bytes; False when the file was already gone (idempotent)."""
+    try:
+        document_path(data_dir, tenant_id, sha256).unlink()
+        return True
+    except FileNotFoundError:
+        return False

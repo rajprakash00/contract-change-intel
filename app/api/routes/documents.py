@@ -5,15 +5,20 @@ in services; domain exceptions become HTTP responses via app.errors handlers.
 """
 
 import uuid
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Header, UploadFile, status
+from fastapi import APIRouter, Query, UploadFile, status
+from fastapi.responses import FileResponse
 
 import app.services.documents as documents_service
-from app.api.deps import SessionDep, SettingsDep
-from app.schemas.documents import DocumentConflictDetail, DocumentRead
+from app.api.deps import SessionDep, SettingsDep, TenantId
+from app.schemas.documents import DocumentConflictDetail, DocumentListPage, DocumentRead
 
 router = APIRouter(tags=["documents"])
+
+_NOT_FOUND_RESPONSE: dict[int | str, dict[str, Any]] = {
+    404: {"description": "no such document for this tenant"}
+}
 
 
 @router.post(
@@ -33,7 +38,7 @@ async def post_documents(
     session: SessionDep,
     settings: SettingsDep,
     file: UploadFile,
-    tenant_id: Annotated[uuid.UUID, Header(alias="X-Tenant-Id")],
+    tenant_id: TenantId,
 ) -> DocumentRead:
     document = await documents_service.upload_document(
         session,
@@ -45,3 +50,72 @@ async def post_documents(
         max_bytes=settings.max_upload_mb * 1024 * 1024,
     )
     return DocumentRead.model_validate(document)
+
+
+@router.get("/documents", response_model=DocumentListPage)
+async def get_documents(
+    session: SessionDep,
+    tenant_id: TenantId,
+    limit: Annotated[int, Query(ge=1, le=documents_service.MAX_LIST_LIMIT)] = (
+        documents_service.DEFAULT_LIST_LIMIT
+    ),
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> DocumentListPage:
+    items, total = await documents_service.list_documents(
+        session, tenant_id=tenant_id, limit=limit, offset=offset
+    )
+    return DocumentListPage(
+        items=[DocumentRead.model_validate(item) for item in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get(
+    "/documents/{document_id}",
+    response_model=DocumentRead,
+    responses=_NOT_FOUND_RESPONSE,
+)
+async def get_document(
+    session: SessionDep,
+    document_id: uuid.UUID,
+    tenant_id: TenantId,
+) -> DocumentRead:
+    document = await documents_service.get_document(
+        session, tenant_id=tenant_id, document_id=document_id
+    )
+    return DocumentRead.model_validate(document)
+
+
+@router.get(
+    "/documents/{document_id}/content",
+    response_class=FileResponse,
+    responses=_NOT_FOUND_RESPONSE,
+)
+async def get_document_content(
+    session: SessionDep,
+    document_id: uuid.UUID,
+    tenant_id: TenantId,
+    settings: SettingsDep,
+) -> FileResponse:
+    document, path = await documents_service.resolve_document_file(
+        session, tenant_id=tenant_id, document_id=document_id, data_dir=settings.data_dir
+    )
+    return FileResponse(path=str(path), media_type=document.mime_type, filename=document.filename)
+
+
+@router.delete(
+    "/documents/{document_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses=_NOT_FOUND_RESPONSE,
+)
+async def delete_document(
+    session: SessionDep,
+    document_id: uuid.UUID,
+    tenant_id: TenantId,
+    settings: SettingsDep,
+) -> None:
+    await documents_service.delete_document(
+        session, tenant_id=tenant_id, document_id=document_id, data_dir=settings.data_dir
+    )

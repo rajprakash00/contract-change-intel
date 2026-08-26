@@ -9,6 +9,7 @@ from app.api.routes import documents, health
 from app.config import get_settings
 from app.errors import register_exception_handlers
 from app.logging_config import configure_logging
+from app.middleware import RequestIDMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="contract-change-intel", lifespan=lifespan)
+    app.add_middleware(RequestIDMiddleware)
     app.include_router(health.router)
     app.include_router(documents.router)
     register_exception_handlers(app)

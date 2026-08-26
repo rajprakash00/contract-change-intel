@@ -13,6 +13,7 @@ from app.schemas.documents import DocumentConflictDetail
 from app.services.documents import (
     ALLOWED_MIME_TYPES,
     DocumentAlreadyExistsError,
+    DocumentNotFoundError,
     MimeNotAllowedError,
     UploadTooLargeError,
 )
@@ -43,7 +44,12 @@ async def _document_already_exists(_: Request, exc: DocumentAlreadyExistsError) 
     return _detail_response(status.HTTP_409_CONFLICT, detail)
 
 
+async def _document_not_found(_: Request, exc: DocumentNotFoundError) -> JSONResponse:
+    return _detail_response(status.HTTP_404_NOT_FOUND, str(exc))
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     app.exception_handler(MimeNotAllowedError)(_mime_not_allowed)
     app.exception_handler(UploadTooLargeError)(_upload_too_large)
     app.exception_handler(DocumentAlreadyExistsError)(_document_already_exists)
+    app.exception_handler(DocumentNotFoundError)(_document_not_found)
