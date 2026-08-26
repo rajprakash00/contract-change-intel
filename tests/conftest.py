@@ -1,9 +1,22 @@
 import pytest
+from alembic import command
+from alembic.config import Config
 from httpx import ASGITransport, AsyncClient
 
 import app.db as db
 from app.config import get_settings
 from app.main import app
+
+
+@pytest.fixture(scope="session", autouse=True)
+def migrated_db():
+    """Apply migrations once per test session against the configured database.
+
+    Keeps tests self-contained: CI or a fresh local db only needs to be running,
+    not pre-migrated. URL comes from app settings, same as env.py.
+    """
+    cfg = Config("alembic.ini")
+    command.upgrade(cfg, "head")
 
 
 @pytest.fixture

@@ -14,6 +14,10 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
+    # Root directory for uploaded files; files land at {data_dir}/{tenant_id}/{sha256}.
+    data_dir: str = "./data"
+    max_upload_mb: int = 50
+
 
 @lru_cache
 def get_settings() -> Settings:

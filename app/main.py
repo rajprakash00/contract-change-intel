@@ -1,26 +1,16 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Annotated, Literal
 
-from fastapi import Depends, FastAPI, HTTPException, status
-from pydantic import BaseModel
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import FastAPI
 
 import app.db as db
-from app import __version__
+from app.api.routes import documents, health
 from app.config import get_settings
+from app.errors import register_exception_handlers
 from app.logging_config import configure_logging
 
 logger = logging.getLogger(__name__)
-
-SessionDep = Annotated[AsyncSession, Depends(db.get_session)]
-
-
-class HealthResponse(BaseModel):
-    status: Literal["ok", "degraded"]
-    database: bool
-    version: str
 
 
 @asynccontextmanager
@@ -36,26 +26,9 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     app = FastAPI(title="contract-change-intel", lifespan=lifespan)
-
-    @app.get(
-        "/healthz",
-        response_model=HealthResponse,
-        responses={503: {"description": "database unreachable"}},
-    )
-    async def healthz(session: SessionDep) -> HealthResponse:
-        try:
-            await db.check_database(session)
-        except Exception:
-            # Deliberately broad: any driver/connection failure must read as unhealthy,
-            # never bubble up as a 500 from a probe endpoint. Logged so the real cause
-            # is visible instead of a bare 503.
-            logger.warning("healthz database check failed", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="database unavailable",
-            ) from None
-        return HealthResponse(status="ok", database=True, version=__version__)
-
+    app.include_router(health.router)
+    app.include_router(documents.router)
+    register_exception_handlers(app)
     return app
 
 

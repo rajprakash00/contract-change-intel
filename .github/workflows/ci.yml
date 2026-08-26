@@ -40,7 +40,7 @@ jobs:
           uv run ruff format --check .
 
       - name: Typecheck
-        run: uv run mypy app
+        run: uv run mypy app migrations/env.py
 
       - name: Tests
         # The runner has no port conflict, so its Postgres service stays on 5432;

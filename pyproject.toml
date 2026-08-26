@@ -5,9 +5,11 @@ description = "Extract obligations from agreements, explain amendment changes, a
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "alembic>=1.19.1",
     "asyncpg>=0.31.0",
     "fastapi>=0.141.1",
     "pydantic-settings>=2.15.0",
+    "python-multipart>=0.0.32",
     "sqlalchemy>=2.0.52",
     "uvicorn[standard]>=0.52.4",
 ]
