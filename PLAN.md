@@ -24,6 +24,35 @@ LLM provider: OpenAI primary (structured outputs + `text-embedding-3-small`);
 Anthropic SDK once during week 2 for comparison. Frameworks (LangChain/LangGraph)
 are not used for core pipelines; primitives first.
 
+## Architecture
+
+Code is layered strictly in one direction — each layer knows only the layers below it:
+
+```text
+api/routes ──▶ services ──▶ repositories ──▶ models
+                 └──────▶ storage
+schemas serve as the wire contracts at the router edge
+errors.py maps domain exceptions onto HTTP once, app-wide
+```
+
+| Module       | Owns                        | Rules |
+|--------------|-----------------------------|-------|
+| `api/main.py` | router aggregation         | single `api_router` built via `include_router()`; the only thing `create_app()` mounts. |
+| `api/deps.py` | shared dependencies        | `SessionDep` etc.; imported by route modules. |
+| `api/routes/` | HTTP adapters              | parse request → call service → return schema. No business rules, no try/except, no logging. Handlers named for the verb+resource (`post_documents`). |
+| `services/`  | business rules              | orchestrate repositories + storage; validation, dedupe, orchestration, audit logs. Raise domain exceptions carrying no HTTP semantics. No framework types cross this boundary (pass callables/data, not `UploadFile`). |
+| `repositories/` | persistence             | DB calls only, one module per table, plain functions — no generic base classes. |
+| `storage/`   | byte persistence            | filesystem today; swapping to object storage touches only this module. |
+| `schemas/`   | Pydantic wire contracts     | response/request models; `from_attributes` to validate straight off ORM rows. |
+| `models/`    | ORM rows                    | SQLAlchemy 2.0 `Mapped` style. |
+| `errors.py`  | exception → HTTP mapping    | registered once in `create_app` via FastAPI exception handlers; new endpoints extend this table instead of adding per-route error handling. |
+| `config.py`  | settings                    | env-driven; the only place that reads `.env`. |
+| `db.py`      | engine/session lifecycle    | module-level singletons owned by the app lifespan. |
+
+Blocking IO (disk writes) leaves the event loop via `asyncio.to_thread`.
+Migrations are async Alembic with the URL taken from app settings so `DATABASE_URL`
+overrides behave identically for API, tests, and migrations.
+
 ## Roadmap
 
 - **W1 — Backend foundations**: FastAPI skeleton, settings, async engine, `/healthz`,

@@ -24,4 +24,14 @@ uv run uvicorn app.main:app --reload
 
 ## Configuration
 
-Environment variables (see `.env.example`): `DATABASE_URL`.
+Environment variables (see `.env.example`): `DATABASE_URL`, `DATA_DIR`,
+`MAX_UPLOAD_MB`.
+
+## Database schema
+
+Schema changes go through Alembic (async engine, URL from app settings):
+
+```sh
+uv run alembic upgrade head                                  # apply
+uv run alembic revision --autogenerate -m "describe change"  # new migration
+```

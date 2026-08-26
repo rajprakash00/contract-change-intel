@@ -1,40 +1,53 @@
 # Progress
 
-State: week 1, day 1 complete — ruff/mypy clean, `/healthz` integration test green.
+State: week 1, day 2 complete — Alembic migrations + `documents` table +
+`POST /documents` upload; ruff/mypy clean, 6 integration tests green.
 
 ## Map
 
-- `pyproject.toml` — deps + ruff/mypy/pytest config (source of truth)
-- `app/config.py` — Settings reads `.env`; `database_url` default uses host port **5433**; `log_level`
-- `app/db.py` — module-level engine/sessionmaker; `init_engine`, `dispose_engine`,
-  `get_session` (FastAPI dep), `check_database` (raises on failure)
-- `app/logging_config.py` — `configure_logging()` wired in lifespan; text format now,
-  JSON at deploy milestone
-- `app/main.py` — `create_app()`; lifespan owns engine init/dispose; `GET /healthz`
-  returns `{status, database, version}`, 503 + warning log (with traceback) when DB down
-- `tests/conftest.py` — client fixture; engine init/dispose manual (ASGITransport skips lifespan)
-- `docker-compose.yml` — pgvector/pgvector:pg17, db `cci`, user/pass postgres, **5433→5432**
-- `.github/workflows/ci.yml` — ruff, mypy, pytest; CI db on runner port 5432 via DATABASE_URL override
+- `app/config.py` — Settings (.env): `database_url` (host port **5433**), `data_dir`,
+  `max_upload_mb`, `log_level`
+- `app/db.py` — engine/sessionmaker lifecycle owned by lifespan; `get_session` dep
+- `app/main.py` — `create_app()`; lifespan, mounts `api_router`, error handlers
+- `app/api/main.py` — aggregates route routers into one `api_router`
+- `app/api/deps.py` — shared deps (`SessionDep`, `SettingsDep`)
+- `app/api/routes/documents.py` — thin adapter for `POST /documents`
+- `app/api/routes/health.py` — `GET /healthz` probe
+- `app/models/` — ORM: `Document`, `DocumentStatus` (uploaded/parsed/failed)
+- `app/schemas/` — Pydantic wire contracts (`DocumentRead`, conflict detail)
+- `app/repositories/documents.py` — DB calls only: create, find_by_sha256
+- `app/services/documents.py` — upload flow + domain exceptions (see PLAN Architecture)
+- `app/storage/local.py` — content-addressed files `{data_dir}/{tenant_id}/{sha256}`
+- `app/errors.py` — domain exception → 415/413/409 mapping, registered once
+- `alembic.ini` + `migrations/` — async Alembic; initial migration creates `documents`
+- `tests/conftest.py` — applies migrations per session; per-test DATA_DIR tmp dir
+- `docker-compose.yml` — pgvector/pgvector:pg17, **5433→5432**
+- `.github/workflows/ci.yml` — ruff, mypy, pytest against real Postgres
 
 Constraints:
 
 - Host port 5432 is occupied by an unrelated running stack — do not stop it; use 5433.
 - Git staging/commits are handled by the owner, not tooling.
 
+## Commands
+
 ```sh
 docker compose up -d --wait
+uv run alembic upgrade head   # tests run this automatically via conftest
 uv run pytest
 uv run uvicorn app.main:app --reload
 ```
 
-## Next (day 2)
+Upload contract: multipart `file` + `X-Tenant-Id` header → 201 `{id, tenant_id,
+filename, mime_type, sha256, status}`; errors: 409 duplicate bytes in tenant
+(`{existing_id}`), 413 over size cap, 415 mime outside allow-list, 422 missing header.
 
-1. Alembic async setup + initial migration.
-2. `documents` table: uuid pk, tenant_id (indexed), filename, mime_type, sha256,
-   status enum (uploaded/parsed/failed), created_at/updated_at, unique (tenant_id, sha256).
-3. Repository functions for inserts/lookups.
-4. `POST /documents`: multipart upload → `./data/{tenant_id}/`; 415 on mime outside
-   allow-list, 409 on duplicate sha256 within tenant.
-5. Integration tests: happy path, duplicate, invalid mime.
+## Next (day 3)
 
-Open: no GitHub remote yet (CI unverified); auth deferred to multi-tenancy work.
+1. `GET /documents` list + `GET /documents/{id}` per tenant; download of stored bytes.
+2. DELETE semantics (row + file) or defer to retention work.
+3. Request-ID middleware groundwork.
+4. Consistent error body format across endpoints.
+
+Open: no GitHub remote yet (CI unverified); auth deferred to multi-tenancy work;
+client-declared mime trusted until content sniffing lands with the parser.
