@@ -18,3 +18,10 @@ class DocumentRead(BaseModel):
 
 class DocumentConflictDetail(BaseModel):
     existing_id: uuid.UUID
+
+
+class DocumentListPage(BaseModel):
+    items: list[DocumentRead]
+    total: int
+    limit: int
+    offset: int

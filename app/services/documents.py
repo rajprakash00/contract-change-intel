@@ -9,7 +9,8 @@ import asyncio
 import hashlib
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
+from pathlib import Path
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,6 +32,9 @@ ALLOWED_MIME_TYPES = frozenset(
 
 _READ_CHUNK_SIZE = 1024 * 1024
 
+DEFAULT_LIST_LIMIT = 50
+MAX_LIST_LIMIT = 100
+
 
 class MimeNotAllowedError(Exception):
     def __init__(self, content_type: str | None) -> None:
@@ -48,6 +52,12 @@ class DocumentAlreadyExistsError(Exception):
     def __init__(self, existing_id: uuid.UUID | None = None) -> None:
         self.existing_id = existing_id
         super().__init__("document already exists")
+
+
+class DocumentNotFoundError(Exception):
+    def __init__(self, document_id: uuid.UUID) -> None:
+        self.document_id = document_id
+        super().__init__(f"document {document_id} not found")
 
 
 async def _read_upload(
@@ -121,3 +131,71 @@ async def upload_document(
         len(content),
     )
     return document
+
+
+async def get_document(
+    session: AsyncSession, *, tenant_id: uuid.UUID, document_id: uuid.UUID
+) -> Document:
+    """Fetch one document scoped to the tenant.
+
+    Raises DocumentNotFoundError for unknown ids and other tenants' rows alike.
+    """
+    document = await documents_repo.find_by_id(
+        session, tenant_id=tenant_id, document_id=document_id
+    )
+    if document is None:
+        raise DocumentNotFoundError(document_id)
+    return document
+
+
+async def list_documents(
+    session: AsyncSession, *, tenant_id: uuid.UUID, limit: int, offset: int
+) -> tuple[Sequence[Document], int]:
+    """One page of the tenant's documents (newest first) plus the total count."""
+    items = await documents_repo.list_page(session, tenant_id=tenant_id, limit=limit, offset=offset)
+    total = await documents_repo.count_for_tenant(session, tenant_id=tenant_id)
+    return items, total
+
+
+async def resolve_document_file(
+    session: AsyncSession, *, tenant_id: uuid.UUID, document_id: uuid.UUID, data_dir: str
+) -> tuple[Document, Path]:
+    """Row + on-disk path for download; both halves must exist or it reads as 404."""
+    document = await get_document(session, tenant_id=tenant_id, document_id=document_id)
+    path = local_storage.document_path(data_dir, tenant_id, document.sha256)
+    if not await asyncio.to_thread(path.is_file):
+        # Row without bytes is an integrity gap; log loudly, read as not-found outside.
+        logger.warning(
+            "document row missing stored file tenant=%s document=%s sha=%s",
+            tenant_id,
+            document.id,
+            document.sha256,
+        )
+        raise DocumentNotFoundError(document_id)
+    return document, path
+
+
+async def delete_document(
+    session: AsyncSession, *, tenant_id: uuid.UUID, document_id: uuid.UUID, data_dir: str
+) -> None:
+    """Delete the row, then best-effort remove the stored file.
+
+    Row first: a crash between the two steps leaves at worst an orphan file,
+    never a row pointing at missing bytes. Raises DocumentNotFoundError.
+    """
+    document = await get_document(session, tenant_id=tenant_id, document_id=document_id)
+    await documents_repo.delete(session, document)
+
+    removed = await asyncio.to_thread(
+        local_storage.delete_document, data_dir, tenant_id, document.sha256
+    )
+    if not removed:
+        logger.warning(
+            "deleted row had no stored file tenant=%s document=%s sha=%s",
+            tenant_id,
+            document.id,
+            document.sha256,
+        )
+    logger.info(
+        "document deleted tenant=%s document=%s sha=%s", tenant_id, document.id, document.sha256
+    )
