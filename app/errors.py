@@ -27,12 +27,14 @@ def _detail_response(status_code: int, detail: object) -> JSONResponse:
 
 async def _mime_not_allowed(_: Request, exc: MimeNotAllowedError) -> JSONResponse:
     detail = f"{exc}; allowed: {sorted(ALLOWED_MIME_TYPES)}"
+    if exc.sniffed is not None:
+        detail += f"; content identified as {exc.sniffed}"
     return _detail_response(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, detail)
 
 
 async def _upload_too_large(_: Request, exc: UploadTooLargeError) -> JSONResponse:
     detail = f"upload exceeds limit of {exc.max_bytes // (1024 * 1024)} MiB"
-    return _detail_response(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail)
+    return _detail_response(status.HTTP_413_CONTENT_TOO_LARGE, detail)
 
 
 async def _document_already_exists(_: Request, exc: DocumentAlreadyExistsError) -> JSONResponse:

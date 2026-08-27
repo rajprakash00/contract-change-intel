@@ -22,6 +22,13 @@ API server:
 uv run uvicorn app.main:app --reload
 ```
 
+Or fully containerized (API on :8000):
+
+```sh
+docker compose up -d --wait
+docker compose run --rm app alembic upgrade head
+```
+
 ## Configuration
 
 Environment variables (see `.env.example`): `DATABASE_URL`, `DATA_DIR`,
