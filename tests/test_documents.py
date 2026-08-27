@@ -6,7 +6,9 @@ tests are independent of each other and repeatable across runs.
 """
 
 import hashlib
+import io
 import uuid
+import zipfile
 from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
@@ -20,6 +22,16 @@ from app.models.document import Document
 
 PDF_MIME = "application/pdf"
 TEXT_MIME = "text/plain"
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def _docx_bytes() -> bytes:
+    """Minimal real OOXML package: ZIP with [Content_Types].xml + word/ parts."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as bundle:
+        bundle.writestr("[Content_Types].xml", "<Types/>")
+        bundle.writestr("word/document.xml", "<doc/>")
+    return buffer.getvalue()
 
 
 @pytest.fixture(autouse=True)
@@ -258,4 +270,35 @@ async def test_delete_removes_row_file_and_is_repeat_safe(
 
     repeat = await client.delete(f"/documents/{body['id']}", headers=headers)
     assert repeat.status_code == 404
+    assert await document_count() == 0
+
+
+async def test_declared_type_must_match_actual_bytes(client: AsyncClient) -> None:
+    response = await client.post(
+        "/documents",
+        files={"file": ("fake.txt", b"%PDF-1.7 not really text", TEXT_MIME)},
+        headers={"X-Tenant-Id": str(uuid.uuid4())},
+    )
+    assert response.status_code == 415
+    assert "content identified as application/pdf" in response.json()["detail"]
+    assert await document_count() == 0
+
+
+async def test_docx_upload_accepted(client: AsyncClient) -> None:
+    response = await upload(client, _docx_bytes(), DOCX_MIME, "amendment.docx")
+    assert response.status_code == 201
+    assert response.json()["mime_type"] == DOCX_MIME
+
+
+async def test_oversize_upload_rejected_with_413(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MAX_UPLOAD_MB", "1")
+    get_settings.cache_clear()
+    try:
+        payload = b"a" * (1024 * 1024 + 1)
+        response = await upload(client, payload)
+        assert response.status_code == 413
+    finally:
+        get_settings.cache_clear()
     assert await document_count() == 0

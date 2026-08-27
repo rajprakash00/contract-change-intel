@@ -1,4 +1,6 @@
-# Local development database only.
+# Local development stack: Postgres plus the API container.
+# Migrations are not automatic; run them once the stack is up:
+#   docker compose run --rm app alembic upgrade head
 services:
   db:
     image: pgvector/pgvector:pg17
@@ -17,5 +19,20 @@ services:
       timeout: 3s
       retries: 10
 
+  app:
+    build: .
+    environment:
+      # Inside the compose network the db service is reachable on its native 5432.
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/cci
+      DATA_DIR: /data
+    ports:
+      - "8000:8000"
+    volumes:
+      - uploads:/data
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   pgdata:
+  uploads:

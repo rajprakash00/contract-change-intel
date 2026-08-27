@@ -1,4 +1,4 @@
-"""Document upload flow: validation, hashing, storage, persistence.
+"""Document flows: validation, hashing, storage, persistence, audit.
 
 Business rules live here; routers translate the module's exceptions into HTTP
 responses. The service depends on repository + storage functions only — no
@@ -7,17 +7,21 @@ FastAPI types cross this boundary.
 
 import asyncio
 import hashlib
+import io
 import logging
 import uuid
+import zipfile
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import app.repositories.audit_log as audit_repo
 import app.repositories.documents as documents_repo
 import app.storage.local as local_storage
 from app.models.document import Document
+from app.request_context import current_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +41,9 @@ MAX_LIST_LIMIT = 100
 
 
 class MimeNotAllowedError(Exception):
-    def __init__(self, content_type: str | None) -> None:
+    def __init__(self, content_type: str | None, sniffed: str | None = None) -> None:
         self.content_type = content_type
+        self.sniffed = sniffed
         super().__init__(f"unsupported media type {content_type!r}")
 
 
@@ -76,6 +81,38 @@ async def _read_upload(
     return hasher.hexdigest(), b"".join(parts)
 
 
+_PDF_MAGIC = b"%PDF-"
+_ZIP_MAGIC = b"PK\x03\x04"
+_DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def sniff_mime(content: bytes) -> str | None:
+    """Sniff magic bytes of doc.
+    PDF by prefix; DOCX as a ZIP package carrying Word parts; text when the
+    bytes decode as UTF-8 without NULs. Anything else reads as unknown.
+    """
+    if not content:
+        return None
+    if content.startswith(_PDF_MAGIC):
+        return "application/pdf"
+    if content.startswith(_ZIP_MAGIC):
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as bundle:
+                names = bundle.namelist()
+        except zipfile.BadZipFile:
+            return None
+        if "[Content_Types].xml" in names and any(n.startswith("word/") for n in names):
+            return _DOCX_MIME
+        return None
+    if b"\x00" in content:
+        return None
+    try:
+        content.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    return "text/plain"
+
+
 async def upload_document(
     session: AsyncSession,
     *,
@@ -86,7 +123,7 @@ async def upload_document(
     data_dir: str,
     max_bytes: int,
 ) -> Document:
-    """Validate, dedupe-check, store to disk, then persist a row.
+    """Validate, dedupe-check, sniff, store to disk, then persist.
 
     Raises MimeNotAllowedError, UploadTooLargeError, DocumentAlreadyExistsError.
     """
@@ -94,6 +131,11 @@ async def upload_document(
         raise MimeNotAllowedError(content_type)
 
     sha256, content = await _read_upload(read, max_bytes)
+
+    # Sniff and match declared doc types.
+    sniffed = sniff_mime(content)
+    if sniffed != content_type:
+        raise MimeNotAllowedError(content_type, sniffed=sniffed)
 
     existing = await documents_repo.find_by_sha256(session, tenant_id=tenant_id, sha256=sha256)
     if existing is not None:
@@ -111,8 +153,8 @@ async def upload_document(
             sha256=sha256,
         )
     except IntegrityError:
-        # Lost a race against a concurrent upload of identical bytes within this
-        # tenant. The stored file is content-addressed, so leaving it is correct.
+        # Concurrent upload by tenant
+        # The stored file is content-addressed, so leaving it is correct.
         await session.rollback()
         raced = await documents_repo.find_by_sha256(session, tenant_id=tenant_id, sha256=sha256)
         logger.info(
@@ -129,6 +171,20 @@ async def upload_document(
         document.id,
         document.sha256,
         len(content),
+    )
+    await audit_repo.record(
+        session,
+        tenant_id=document.tenant_id,
+        request_id=current_request_id(),
+        action="document.upload",
+        resource_type="document",
+        resource_id=document.id,
+        detail={
+            "filename": document.filename,
+            "sha256": document.sha256,
+            "mime_type": document.mime_type,
+            "size_bytes": len(content),
+        },
     )
     return document
 
@@ -164,7 +220,7 @@ async def resolve_document_file(
     document = await get_document(session, tenant_id=tenant_id, document_id=document_id)
     path = local_storage.document_path(data_dir, tenant_id, document.sha256)
     if not await asyncio.to_thread(path.is_file):
-        # Row without bytes is an integrity gap; log loudly, read as not-found outside.
+        # Row without bytes is an integrity gap; doc not found
         logger.warning(
             "document row missing stored file tenant=%s document=%s sha=%s",
             tenant_id,
@@ -178,7 +234,7 @@ async def resolve_document_file(
 async def delete_document(
     session: AsyncSession, *, tenant_id: uuid.UUID, document_id: uuid.UUID, data_dir: str
 ) -> None:
-    """Delete the row, then best-effort remove the stored file.
+    """Delete the row, then remove the stored file.
 
     Row first: a crash between the two steps leaves at worst an orphan file,
     never a row pointing at missing bytes. Raises DocumentNotFoundError.
@@ -198,4 +254,13 @@ async def delete_document(
         )
     logger.info(
         "document deleted tenant=%s document=%s sha=%s", tenant_id, document.id, document.sha256
+    )
+    await audit_repo.record(
+        session,
+        tenant_id=tenant_id,
+        request_id=current_request_id(),
+        action="document.delete",
+        resource_type="document",
+        resource_id=document.id,
+        detail={"filename": document.filename, "sha256": document.sha256},
     )

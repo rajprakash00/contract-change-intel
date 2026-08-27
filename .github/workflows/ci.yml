@@ -48,3 +48,14 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/cci
         run: uv run pytest -q
+
+  image:
+    # Proves the deployment artifact builds on every change; no registry push yet.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        run: docker build -t contract-change-intel:${{ github.sha }} .

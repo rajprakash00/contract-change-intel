@@ -5,7 +5,6 @@ as FileResponse pass through untouched and there is no extra task boundary that
 would break contextvars for downstream work.
 """
 
-import contextvars
 import logging
 import time
 import uuid
@@ -14,11 +13,9 @@ from typing import Any
 
 from starlette.datastructures import Headers
 
-logger = logging.getLogger(__name__)
+from app.request_context import request_id_ctx
 
-# Groundwork for structured traces: handlers and future log filters can read the
-# active id from here without threading it through every signature.
-request_id_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("request_id", default="")
+logger = logging.getLogger(__name__)
 
 _MAX_REQUEST_ID_LEN = 64
 
@@ -67,4 +64,5 @@ class RequestIDMiddleware:
                 duration_ms,
                 request_id,
             )
+        if request_id_ctx.get() == request_id:
             request_id_ctx.reset(token)
