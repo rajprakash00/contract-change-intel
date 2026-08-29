@@ -34,7 +34,8 @@ CI (`.github/workflows/ci.yml`) runs exactly these; the `verify` skill wraps the
 
 ## Architecture — strict one-directional layering
 
-`api/routes → services → repositories → models`; services may also call `storage`.
+`api/routes → services → repositories → models`; services may also call `storage`
+and `llm`.
 `schemas` are wire contracts at the route edge; `errors.py` maps domain exceptions → HTTP once, app-wide.
 
 | Layer | Rules |
@@ -44,6 +45,7 @@ CI (`.github/workflows/ci.yml`) runs exactly these; the `verify` skill wraps the
 | `app/services/`  | Business rules. Raise domain exceptions carrying no HTTP semantics. No framework types cross this boundary (pass `file.read`, not `UploadFile`). Blocking IO via `asyncio.to_thread`. |
 | `app/repositories/` | DB calls only, plain functions, one module per table, no generic base classes. |
 | `app/storage/`   | Byte persistence only; content-addressed `{data_dir}/{tenant_id}/{sha256}`. |
+| `app/llm/`       | LLM provider access; the only layer that imports an LLM SDK (`app/llm/client.py`). Converts SDK failures into `LlmError`s; logs token usage + cost per call (`app/llm/cost.py` is pure math). |
 | `app/models/`    | SQLAlchemy 2.0 `Mapped` style. |
 | `app/schemas/`   | Pydantic v2; `from_attributes` to validate straight off ORM rows. |
 

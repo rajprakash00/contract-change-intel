@@ -1,8 +1,9 @@
 # Progress
 
-State: week 1 complete — W1·A foundations, W1·B read paths, W1·C hardening + gate
-(audit trail, mime sniffing, log correlation, Docker/compose/CI image job, ADRs);
-ruff/mypy clean, 32 integration+unit tests green.
+State: week 1 complete (W1·A foundations, W1·B read paths, W1·C hardening + gate)
+plus **W2·A LLM reliability foundations** (OpenAI settings, thin client wrapper,
+structured-outputs skeleton, evals placeholder); ruff/mypy clean, 47
+integration+unit tests green.
 
 ## Map
 
@@ -28,6 +29,16 @@ ruff/mypy clean, 32 integration+unit tests green.
   `sniff_mime`, domain exceptions (see PLAN Architecture)
 - `app/storage/local.py` — content-addressed files `{data_dir}/{tenant_id}/{sha256}`;
   save/path/delete
+- `app/llm/client.py` — thin OpenAI wrapper (only module importing the SDK):
+  settings-driven timeout/retries, SDK-delegated 429 backoff, `LlmError`
+  hierarchy (`LlmNotConfiguredError`/`LlmCallError`/`LlmOutputError`), one
+  structured `llm call` log line per call (tokens, cost, latency)
+- `app/llm/cost.py` — pure token→USD math; pricing table locked by unit tests
+- `app/services/extraction.py` — structured-outputs skeleton: `ObligationExtraction`
+  schema + `extract_obligations()`; prompt-injection boundary in `docs/llm-boundaries.md`
+- `evals/` — golden-record placeholder; JSONL format decision in `evals/README.md`
+- `docs/decisions/` — ADR-001 content-addressed storage; ADR-002 offset pagination;
+  ADR-003 direct OpenAI SDK (no LLM framework)
 - `app/errors.py` — domain exception → 415/413/409/404 mapping, registered once
 - `alembic.ini` + `migrations/` — async Alembic; `documents`, `audit_log`
 - `Dockerfile` — multi-stage (uv builder → slim runtime, non-root); compose `app`
@@ -64,15 +75,17 @@ limit ≤ 100; `GET /documents/{id}` → `DocumentRead`;
 Every response carries `X-Request-ID` (echoed when sane, else generated) and
 every log line carries the same id.
 
-## Next (W2·A — LLM reliability foundations)
+## Next (W2·B — LLM calling + eval baseline)
 
-1. Settings for OpenAI (key, base URL, model names) via `app/config.py`; no keys in code.
-2. Thin OpenAI client wrapper: timeouts, retries with jittered backoff,
-   rate-limit handling; token usage + cost captured per call into structured logs.
-3. Structured outputs skeleton (Pydantic-schema-driven) exercised by one real call
-   behind a service function; prompt-injection boundary notes in `docs/`.
-4. Golden-record fixture set for later evals (`evals/` placeholder + format decision).
+1. HTTP surface for extraction (route + errors.py mapping for LlmError) behind
+   an ingest job row; no synchronous LLM call in the request path.
+2. Streaming responses; tool-calling skeleton with safe-tool-design rules from
+   `docs/llm-boundaries.md`.
+3. First golden records in `evals/golden/` once real documents exist; cost math
+   extended to any new models before first use.
+4. Anthropic SDK comparison spike (ADR-003) — same wrapper seam, real calls.
 
 Open: auth deferred to multi-tenancy work; DELETE has no retention window yet;
-audit_log retention/read APIs deferred until review-queue work; CI green locally,
-first GitHub Actions run still unverified.
+audit_log retention/read APIs deferred until review-queue work; LLM tests run
+against a fake httpx2 transport — first call with a real OPENAI_API_KEY still
+unverified; CI green locally, first GitHub Actions run still unverified.
