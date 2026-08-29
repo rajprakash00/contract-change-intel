@@ -18,6 +18,17 @@ class Settings(BaseSettings):
     data_dir: str = "./data"
     max_upload_mb: int = 50
 
+    # LLM access (W2·A). Key comes from env only — never hardcoded, never logged.
+    # Empty key means "LLM features disabled"; OpenAiClient raises
+    # LlmNotConfiguredError at construction so this is visible at startup.
+    openai_api_key: str = ""
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_model: str = "gpt-4o-mini"
+    openai_timeout_seconds: float = 60.0
+    # Retries (with jittered backoff) and 429 handling are delegated to the SDK;
+    # this only bounds how hard it tries before surfacing an LlmError.
+    openai_max_retries: int = 2
+
 
 @lru_cache
 def get_settings() -> Settings:
