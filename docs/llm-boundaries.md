@@ -19,13 +19,36 @@ answers are:
    Free-text model output cannot become a decision; schema failure raises
    `LlmOutputError`. Schemas contain no instruction-shaped fields (no
    "execute", no "call" — only typed data: references, descriptions, owners).
-3. **No tools in reach** — the model has no tool calling yet (W2·A scope).
-   When tool calling lands (W2), tools must be side-effect-free until the
-   safe-tool-design pass: any tool that writes needs human confirmation in
-   the loop.
+3. **Tool calling — read-only skeleton** — tools exist as the `LlmTool`
+   skeleton in `app/llm/client.py` (`complete_with_tools`), with the
+   safe-tool-design rules below. No write-tool is registered anywhere yet.
+
+## Safe tool design (skeleton rules)
+
+Any feature registering `LlmTool`s must hold to these; two are enforced
+mechanically (allow-list, bounded loop), the rest are contract + review:
+
+1. **Read-only handlers.** A tool handler must be a side-effect-free read.
+   The LLM decides *whether to call* a tool, never *whether a side effect
+   happens* — any tool that writes needs human confirmation in the loop
+   before it is ever registered. No enforcement is possible in code (the
+   handler is arbitrary Python); this is a review gate on every `LlmTool`.
+2. **Allow-list, not discovery.** Only explicitly passed tools are reachable;
+   the model naming an unregistered tool raises `LlmOutputError`.
+3. **Bounded loop.** `complete_with_tools` caps tool rounds (`max_rounds`);
+   a model stuck requesting tools fails instead of burning tokens.
+4. **Results travel as tool-role data.** Handler output goes back in the
+   `tool` message channel, never concatenated into user text, so tool
+   output cannot masquerade as instructions either.
+5. **Audited invocations.** Every executed call logs `llm tool call` with
+   the tool name and truncated arguments (trace hygiene below).
 
 ## What this does not yet stop (known gaps)
 
+- **Tool-output poisoning**: a read tool's result is model-visible data with
+  the same trust level as document text; a tool that ever reads attacker-
+  controllable sources can inject content into the loop. Same mitigation
+  path: schemas + citation checking on whatever the model then produces.
 - **Extraction poisoning**: injected text can still shape *content* inside a
   schema-valid reply (e.g., invent an obligation with a favorable owner).
   Mitigation path: citation spans (W3) — extracted items must reference real

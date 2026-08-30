@@ -1,9 +1,12 @@
 # Progress
 
-State: week 1 complete (W1·A foundations, W1·B read paths, W1·C hardening + gate)
-plus **W2·A LLM reliability foundations** (OpenAI settings, thin client wrapper,
-structured-outputs skeleton, evals placeholder); ruff/mypy clean, 47
-integration+unit tests green.
+State: week 1 complete (W1·A foundations, W1·B read paths, W1·C hardening + gate),
+**W2·A LLM reliability foundations** (OpenAI settings, thin client wrapper,
+structured-outputs skeleton, evals placeholder), and **W2·B LLM calling + eval
+baseline** (extraction HTTP surface behind a Postgres job row + worker, streaming,
+tool-calling skeleton, LlmError HTTP mapping); ruff/mypy clean, 78
+integration+unit tests green. Remaining W2 items: first golden records (blocked on
+real documents), Anthropic SDK spike (blocked on a real API key).
 
 ## Map
 
@@ -32,14 +35,27 @@ integration+unit tests green.
 - `app/llm/client.py` — thin OpenAI wrapper (only module importing the SDK):
   settings-driven timeout/retries, SDK-delegated 429 backoff, `LlmError`
   hierarchy (`LlmNotConfiguredError`/`LlmCallError`/`LlmOutputError`), one
-  structured `llm call` log line per call (tokens, cost, latency)
+  structured `llm call` log line per call (tokens, cost, latency),
+  `stream_complete()` (delta streaming, usage logged at stream end),
+  `complete_with_tools()` + `LlmTool` (tool-calling skeleton, bounded loop,
+  read-only-by-contract handlers — rules in `docs/llm-boundaries.md`)
 - `app/llm/cost.py` — pure token→USD math; pricing table locked by unit tests
 - `app/services/extraction.py` — structured-outputs skeleton: `ObligationExtraction`
-  schema + `extract_obligations()`; prompt-injection boundary in `docs/llm-boundaries.md`
+  schema + `extract_obligations()`; job lifecycle: `enqueue_extraction` (queued
+  row only — no LLM in the request path), `get_extraction_job`,
+  `run_next_extraction_job` (worker-side claim+run; every failure becomes a
+  failed row); prompt-injection boundary in `docs/llm-boundaries.md`
+- `app/models/extraction_job.py` + `app/repositories/extraction_jobs.py` —
+  job rows; claim via `FOR UPDATE SKIP LOCKED` (ADR-004)
+- `app/api/routes/extraction.py` — `POST /documents/{id}/extraction` → 202
+  queued job; `GET /extraction-jobs/{id}` polls status/result (tenant-scoped)
+- `app/worker.py` — worker process (`python -m app.worker`): fails fast
+  without an API key, claims queued extraction jobs, polls when idle
+- `app/errors.py` — domain exception → 415/413/409/404/502/503 mapping,
+  registered once (LlmError → 502/503 ready for future sync surfaces)
 - `evals/` — golden-record placeholder; JSONL format decision in `evals/README.md`
 - `docs/decisions/` — ADR-001 content-addressed storage; ADR-002 offset pagination;
-  ADR-003 direct OpenAI SDK (no LLM framework)
-- `app/errors.py` — domain exception → 415/413/409/404 mapping, registered once
+  ADR-003 direct OpenAI SDK (no LLM framework); ADR-004 Postgres job rows
 - `alembic.ini` + `migrations/` — async Alembic; `documents`, `audit_log`
 - `Dockerfile` — multi-stage (uv builder → slim runtime, non-root); compose `app`
   service on :8000 with `uploads` volume; migrate via `docker compose run --rm app alembic upgrade head`
@@ -75,17 +91,18 @@ limit ≤ 100; `GET /documents/{id}` → `DocumentRead`;
 Every response carries `X-Request-ID` (echoed when sane, else generated) and
 every log line carries the same id.
 
-## Next (W2·B — LLM calling + eval baseline)
+## Next (post-W2·B — W3 retrieval + evals)
 
-1. HTTP surface for extraction (route + errors.py mapping for LlmError) behind
-   an ingest job row; no synchronous LLM call in the request path.
-2. Streaming responses; tool-calling skeleton with safe-tool-design rules from
-   `docs/llm-boundaries.md`.
-3. First golden records in `evals/golden/` once real documents exist; cost math
+1. Ingestion pipeline on the job-table worker: chunking, metadata, embeddings
+   into pgvector, hybrid search (vector + full-text), citation spans. Retry
+   policy for stale `running` job rows lands here (see ADR-004 known gap).
+2. First golden records in `evals/golden/` once real documents exist; cost math
    extended to any new models before first use.
-4. Anthropic SDK comparison spike (ADR-003) — same wrapper seam, real calls.
+3. Anthropic SDK comparison spike (ADR-003) — same wrapper seam, real calls
+   (needs a live `ANTHROPIC_API_KEY`; deferred to the owner).
+4. First call with a real `OPENAI_API_KEY` still unverified (LLM tests run
+   against a fake httpx2 transport).
 
 Open: auth deferred to multi-tenancy work; DELETE has no retention window yet;
-audit_log retention/read APIs deferred until review-queue work; LLM tests run
-against a fake httpx2 transport — first call with a real OPENAI_API_KEY still
-unverified; CI green locally, first GitHub Actions run still unverified.
+audit_log retention/read APIs deferred until review-queue work; CI green
+locally, first GitHub Actions run still unverified.
