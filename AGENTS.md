@@ -58,6 +58,7 @@ Never per-route try/except. New table ⇒ new migration via Alembic autogenerate
 - Logging: stdlib, key=value style (`tenant=%s document=%s sha=%s`).
 - Primitives over abstractions: add a dependency only if it demonstrably reduces complexity.
 - Persist structured traces only (request ID, redacted I/O, latency, token usage, cost); never model chain-of-thought. Minimize/redact PII.
+- Commit subjects describe the change, never the schedule (`W2·A` stays out of subjects). Schedule tags live in PLAN/PROGRESS; use a `Refs: W<n>·<X>` trailer in the body if traceability is wanted.
 
 ## Code taste (anti-slop)
 
