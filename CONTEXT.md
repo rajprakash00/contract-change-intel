@@ -24,6 +24,19 @@ _Avoid_: file, upload (as noun)
 The customer organization using the system; every object is scoped to one.
 _Avoid_: customer, org, account
 
+### Ingesting
+
+**Ingestion**:
+Preparing an uploaded Document for search and citation: turning its text into Chunks.
+Precedes Extraction, which reads the same text.
+_Avoid_: parsing, indexing, processing
+
+**Chunk**:
+A span of an Agreement version's text; the unit that gets retrieved and cited.
+Not an Obligation and not a Citation — Citations may point at Chunks, Obligations are
+read from them.
+_Avoid_: passage, segment, fragment, paragraph
+
 ### Reading
 
 **Extraction**:

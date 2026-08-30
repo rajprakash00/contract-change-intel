@@ -91,17 +91,49 @@ limit ≤ 100; `GET /documents/{id}` → `DocumentRead`;
 Every response carries `X-Request-ID` (echoed when sane, else generated) and
 every log line carries the same id.
 
-## Next (post-W2·B — W3 retrieval + evals)
+## Next (W3 — retrieval + evals; design settled, not yet implemented)
 
-1. Ingestion pipeline on the job-table worker: chunking, metadata, embeddings
-   into pgvector, hybrid search (vector + full-text), citation spans. Retry
-   policy for stale `running` job rows lands here (see ADR-004 known gap).
-2. First golden records in `evals/golden/` once real documents exist; cost math
-   extended to any new models before first use.
-3. Anthropic SDK comparison spike (ADR-003) — same wrapper seam, real calls
-   (needs a live `ANTHROPIC_API_KEY`; deferred to the owner).
-4. First call with a real `OPENAI_API_KEY` still unverified (LLM tests run
-   against a fake httpx2 transport).
+W3 item 1 (ingestion pipeline) was grilled to a fully settled design;
+decisions below are confirmed, docs written (ADR-005, ADR-006, ADR-004
+amendment, eval metric definitions, CONTEXT.md Chunk/Ingestion):
+
+- Explicit `POST /documents/{id}/ingestion` → 202 + poll
+  `GET /ingestion-jobs/{id}` (mirrors extraction; no auto-enqueue on upload —
+  the future UI makes the calls, so the human experience is automatic while
+  the API stays explicit).
+- Parsing: pdfplumber (PDF) + python-docx (DOCX); parsed text + page map per
+  document in `document_texts`; citation spans = char offsets into parsed
+  text. Scanned PDFs/OCR out of scope.
+- Chunking (ADR-005): clause-primary from parser structure; recursive
+  paragraph-level fallback with overlap inside oversized clauses; fixed-size
+  last resort. Chunker is pure logic → unit tests.
+- Jobs: new `ingestion_jobs` table + shared claim/lease helper;
+  lease-at-claim retry (ADR-004 amendment): stale `running` rows re-claimable
+  after a 15-min lease, max 3 attempts → `failed max_attempts_exceeded`.
+  Re-run rules: 409 while queued/running; re-run after terminal state
+  replaces chunks/embeddings delete-then-insert. Symmetric for extraction.
+- Embeddings: text-embedding-3-small (1536-d), HNSW index, pgvector via
+  `pgvector/pgvector:pg17` compose image.
+- Search (ADR-006): pgvector + Postgres FTS (tsvector + GIN) fused with RRF;
+  `GET /search?q=` tenant-scoped, cross-document.
+- `Document.status` flips to `parsed`/`failed` on terminal ingestion states
+  (worker-side); the enum already declares these values.
+- Worker: one process, round-robin claim across both job tables.
+- Metrics defined in `evals/README.md` (citation validity, extraction
+  accuracy, recall@k, task completion, latency/cost).
+
+Implementation blocks:
+
+- **W3·A** — migrations (pgvector extension, `document_texts`,
+  `ingestion_jobs`, `document_chunks`) + parsers + chunker
+- **W3·B** — ingestion worker handler (lease/retry, status flips) +
+  embeddings + round-robin worker loop
+- **W3·C** — `GET /search` (RRF hybrid) + citation spans + eval harness for
+  the defined metrics
+- **W3·D** — first golden records when real documents land; verify gate
+
+Still blocked (owner): real documents (golden records), live
+`OPENAI_API_KEY` (first real call) and `ANTHROPIC_API_KEY` (SDK spike).
 
 Open: auth deferred to multi-tenancy work; DELETE has no retention window yet;
 audit_log retention/read APIs deferred until review-queue work; CI green

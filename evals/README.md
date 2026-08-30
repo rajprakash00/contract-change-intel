@@ -4,6 +4,26 @@ Golden datasets for the evaluation harness (W3+). Metrics to be measured:
 extraction accuracy, citation validity, retrieval recall@k, task completion,
 latency, cost.
 
+## Metric definitions
+
+Fixed targets so golden records have something stable to be scored against:
+
+- **Citation validity** — fraction of Citations whose span exists in the
+  document's parsed text and whose surrounding clause supports the statement.
+  Checked mechanically against `document_sha256` + span offsets; "supports"
+  judged against the golden record's expected clause.
+- **Extraction accuracy** — precision/recall of extracted Obligations vs the
+  golden record, matched on `clause_ref` + `owner`; description compared
+  graded (not exact) since it is free text.
+- **Retrieval recall@k** — fraction of golden-relevant Chunks present in the
+  top-k search results for a golden query; reported at k=5 and k=10.
+- **Task completion** — end-to-end Change Report on golden
+  agreement/amendment pairs, judged against a human rubric (not automated
+  until the rubric is written).
+- **Latency / cost** — p50/p95 per pipeline stage and tokens + USD per
+  document, both derived from the structured traces the LLM client already
+  emits (no separate eval instrumentation).
+
 ## Format decision: JSONL, one record per line
 
 Each golden record is one JSON object per line in `golden/*.jsonl`:
