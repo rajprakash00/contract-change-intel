@@ -9,6 +9,7 @@ import logging
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
+from app.llm.client import LlmCallError, LlmNotConfiguredError, LlmOutputError
 from app.schemas.documents import DocumentConflictDetail
 from app.services.documents import (
     ALLOWED_MIME_TYPES,
@@ -17,6 +18,7 @@ from app.services.documents import (
     MimeNotAllowedError,
     UploadTooLargeError,
 )
+from app.services.extraction import ExtractionJobNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +52,35 @@ async def _document_not_found(_: Request, exc: DocumentNotFoundError) -> JSONRes
     return _detail_response(status.HTTP_404_NOT_FOUND, str(exc))
 
 
+async def _extraction_job_not_found(_: Request, exc: ExtractionJobNotFoundError) -> JSONResponse:
+    return _detail_response(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+# LlmError has no raising route today (LLM calls live in the worker, not the
+# request path); the mapping exists so any future synchronous surface inherits
+# the app-wide table instead of inventing per-route handling.
+async def _llm_call_error(_: Request, exc: LlmCallError) -> JSONResponse:
+    # The model call failed after SDK retries: upstream (OpenAI) is the culprit,
+    # not this service — 502, with no internals beyond the model name.
+    return _detail_response(status.HTTP_502_BAD_GATEWAY, f"llm call failed model={exc.model}")
+
+
+async def _llm_output_error(_: Request, exc: LlmOutputError) -> JSONResponse:
+    return _detail_response(status.HTTP_502_BAD_GATEWAY, str(exc))
+
+
+async def _llm_not_configured(_: Request, exc: LlmNotConfiguredError) -> JSONResponse:
+    # Missing key is a deployment problem, not a client error: 503, retryable
+    # only after the operator fixes the environment.
+    return _detail_response(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc))
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     app.exception_handler(MimeNotAllowedError)(_mime_not_allowed)
     app.exception_handler(UploadTooLargeError)(_upload_too_large)
     app.exception_handler(DocumentAlreadyExistsError)(_document_already_exists)
     app.exception_handler(DocumentNotFoundError)(_document_not_found)
+    app.exception_handler(ExtractionJobNotFoundError)(_extraction_job_not_found)
+    app.exception_handler(LlmCallError)(_llm_call_error)
+    app.exception_handler(LlmOutputError)(_llm_output_error)
+    app.exception_handler(LlmNotConfiguredError)(_llm_not_configured)

@@ -6,15 +6,22 @@ token usage + cost per call for trace/cost accounting. No framework types in
 or out; services consume results as plain dataclasses.
 """
 
+import json
 import logging
 import time
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import TypeVar
+from typing import Any, TypeVar, cast
 
 # The SDK vendors its own httpx fork (httpx2); its client/timeout types must
 # match, so this module uses httpx2 everywhere it touches the SDK.
 import httpx2
 from openai import AsyncOpenAI, ContentFilterFinishReasonError, LengthFinishReasonError, OpenAIError
+from openai.types.chat import (
+    ChatCompletionAssistantMessageParam,
+    ChatCompletionMessageParam,
+    ChatCompletionToolParam,
+)
 from openai.types.completion_usage import CompletionUsage
 from pydantic import BaseModel, ValidationError
 
@@ -24,6 +31,17 @@ from app.llm.cost import cost_usd
 logger = logging.getLogger(__name__)
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
+
+# Tool arguments are logged for audit but truncated: they may carry document
+# text or identifiers, and the trace is for debugging, not full content.
+_TOOL_ARGS_LOG_LIMIT = 200
+
+
+def _redact(arguments: dict[str, Any]) -> str:
+    rendered = json.dumps(arguments)
+    if len(rendered) > _TOOL_ARGS_LOG_LIMIT:
+        rendered = rendered[:_TOOL_ARGS_LOG_LIMIT] + "…"
+    return rendered
 
 
 class LlmError(Exception):
@@ -54,6 +72,22 @@ class LlmResult:
     prompt_tokens: int
     completion_tokens: int
     cost_usd: float
+
+
+@dataclass(frozen=True)
+class LlmTool:
+    """One callable tool the model may invoke mid-completion.
+
+    Safe-tool-design contract (docs/llm-boundaries.md): handlers must be
+    side-effect-free reads. Any tool that writes needs human confirmation in
+    the loop before it is ever registered here — the LLM decides *whether*
+    to call a tool, never *whether* a side effect happens.
+    """
+
+    name: str
+    description: str
+    parameters: dict[str, Any]  # JSON Schema for the arguments object
+    handler: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
 
 
 class OpenAiClient:
@@ -144,6 +178,145 @@ class OpenAiClient:
             # Refusal path: usage arrived with the response, so it is logged.
             raise LlmOutputError(rejected)
         return parsed
+
+    async def stream_complete(self, *, system: str, user: str) -> AsyncIterator[str]:
+        """Stream one chat completion, yielding text deltas as they arrive.
+
+        Usage is requested via stream_options and logged once when the stream
+        ends, so cost accounting matches the non-streaming path exactly.
+        Raises LlmCallError when the call fails mid-stream.
+        """
+        started = time.monotonic()
+        try:
+            stream = await self._client.chat.completions.create(
+                model=self._model,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                stream=True,
+                stream_options={"include_usage": True},
+                timeout=self._timeout,
+            )
+        except OpenAIError as exc:
+            raise LlmCallError(self._model, exc) from exc
+        # Usage arrives in the final chunk; a consumer that breaks out early
+        # never sees it. The tokens are spent either way, so the abort is
+        # logged as unaccountable instead of silently dropping the call.
+        prompt_tokens = completion_tokens = 0
+        logged = False
+        try:
+            try:
+                async for chunk in stream:
+                    if chunk.usage is not None:
+                        prompt_tokens = chunk.usage.prompt_tokens
+                        completion_tokens = chunk.usage.completion_tokens
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        yield chunk.choices[0].delta.content
+            except OpenAIError as exc:
+                raise LlmCallError(self._model, exc) from exc
+            cost = cost_usd(
+                self._model,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
+            self._log_usage(prompt_tokens, completion_tokens, cost, started)
+            logged = True
+        finally:
+            if not logged:
+                logger.warning("llm stream aborted model=%s usage=unavailable", self._model)
+
+    async def complete_with_tools(
+        self, *, system: str, user: str, tools: Sequence[LlmTool], max_rounds: int = 3
+    ) -> LlmResult:
+        """Run one tool-calling loop until the model produces a final answer.
+
+        The model may request tool calls; handlers execute server-side and
+        their results are fed back as tool-role data until the model answers
+        in plain text. `max_rounds` bounds the loop so a model stuck requesting
+        tools fails as LlmOutputError instead of burning tokens forever.
+        """
+        by_name = {tool.name: tool for tool in tools}
+        messages: list[ChatCompletionMessageParam] = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ]
+        wire_tools: list[ChatCompletionToolParam] = [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters,
+                },
+            }
+            for tool in tools
+        ]
+        started = time.monotonic()
+        # Usage is accumulated across all rounds and logged once at the end,
+        # matching the one `llm call` line per call contract.
+        prompt_tokens = completion_tokens = 0
+        for _ in range(max_rounds):
+            try:
+                response = await self._client.chat.completions.create(
+                    model=self._model,
+                    messages=messages,
+                    tools=wire_tools,
+                    timeout=self._timeout,
+                )
+            except OpenAIError as exc:
+                raise LlmCallError(self._model, exc) from exc
+            if not response.choices:
+                raise LlmOutputError(f"model returned no choices model={self._model}")
+            message = response.choices[0].message
+            if response.usage is not None:
+                prompt_tokens += response.usage.prompt_tokens
+                completion_tokens += response.usage.completion_tokens
+            tool_calls = message.tool_calls
+            if not tool_calls:
+                cost = cost_usd(
+                    self._model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                )
+                self._log_usage(prompt_tokens, completion_tokens, cost, started)
+                return LlmResult(
+                    text=message.content or "",
+                    model=self._model,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    cost_usd=cost,
+                )
+            messages.append(cast(ChatCompletionAssistantMessageParam, message.model_dump()))
+            for call in tool_calls:
+                if call.type != "function":
+                    raise LlmOutputError(f"model requested unsupported tool call type {call.type}")
+                tool = by_name.get(call.function.name)
+                if tool is None:
+                    raise LlmOutputError(f"model requested unregistered tool {call.function.name}")
+                try:
+                    arguments = json.loads(call.function.arguments or "{}")
+                except json.JSONDecodeError as exc:
+                    # Tool arguments are model output; malformed ones fail the
+                    # same gate as any other schema-invalid reply.
+                    raise LlmOutputError(
+                        f"model tool arguments failed to parse model={self._model}"
+                    ) from exc
+                logger.info("llm tool call tool=%s arguments=%s", tool.name, _redact(arguments))
+                try:
+                    result = await tool.handler(arguments)
+                except LlmError:
+                    raise
+                except Exception as exc:
+                    raise LlmError(f"tool handler failed tool={tool.name}: {exc}") from exc
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": json.dumps(result),
+                    }
+                )
+        raise LlmOutputError(f"model exceeded {max_rounds} tool rounds without a final answer")
 
     def _usage_cost(self, usage: CompletionUsage | None) -> tuple[int, int, float]:
         prompt_tokens = usage.prompt_tokens if usage else 0
