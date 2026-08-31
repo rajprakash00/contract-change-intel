@@ -2,11 +2,14 @@
 
 State: week 1 complete (W1·A foundations, W1·B read paths, W1·C hardening + gate),
 **W2·A LLM reliability foundations** (OpenAI settings, thin client wrapper,
-structured-outputs skeleton, evals placeholder), and **W2·B LLM calling + eval
+structured-outputs skeleton, evals placeholder), **W2·B LLM calling + eval
 baseline** (extraction HTTP surface behind a Postgres job row + worker, streaming,
-tool-calling skeleton, LlmError HTTP mapping); ruff/mypy clean, 78
-integration+unit tests green. Remaining W2 items: first golden records (blocked on
-real documents), Anthropic SDK spike (blocked on a real API key).
+tool-calling skeleton, LlmError HTTP mapping), and **W3·A ingestion schema +
+parsers + chunker** (pgvector/document_texts/ingestion_jobs/document_chunks
+migrations incl. ADR-004 lease columns on both job tables, pdfplumber +
+python-docx parsers with canonical char-offset text, ADR-005 chunker); ruff/mypy
+clean, 95 integration+unit tests green. Remaining W2 items: first golden records
+(blocked on real documents), Anthropic SDK spike (blocked on a real API key).
 
 ## Map
 
@@ -23,7 +26,9 @@ real documents), Anthropic SDK spike (blocked on a real API key).
 - `app/api/routes/documents.py` — POST upload; GET list (`limit`/`offset` page
   envelope), GET by id, GET `/content` download, DELETE
 - `app/api/routes/health.py` — `GET /healthz` probe
-- `app/models/` — ORM: `Document`, `DocumentStatus`, `AuditLog` (append-only)
+- `app/models/` — ORM: `Document`, `DocumentStatus`, `AuditLog` (append-only),
+  `DocumentText` (parsed text + page map), `DocumentChunk` (embedding vector(1536)
+  + generated tsvector), `IngestionJob` (lease columns per ADR-004 amendment)
 - `app/schemas/` — Pydantic wire contracts (`DocumentRead`, `DocumentListPage`, conflict detail)
 - `app/repositories/documents.py` — create, find_by_sha256/id, list_page,
   count_for_tenant, delete
@@ -41,10 +46,18 @@ real documents), Anthropic SDK spike (blocked on a real API key).
   read-only-by-contract handlers — rules in `docs/llm-boundaries.md`)
 - `app/llm/cost.py` — pure token→USD math; pricing table locked by unit tests
 - `app/services/extraction.py` — structured-outputs skeleton: `ObligationExtraction`
-  schema + `extract_obligations()`; job lifecycle: `enqueue_extraction` (queued
-  row only — no LLM in the request path), `get_extraction_job`,
-  `run_next_extraction_job` (worker-side claim+run; every failure becomes a
-  failed row); prompt-injection boundary in `docs/llm-boundaries.md`
+   schema + `extract_obligations()`; job lifecycle: `enqueue_extraction` (queued
+   row only — no LLM in the request path), `get_extraction_job`,
+   `run_next_extraction_job` (worker-side claim+run; every failure becomes a
+   failed row); prompt-injection boundary in `docs/llm-boundaries.md`
+- `app/services/parsing.py` — parsers: bytes → `ParsedDocument` (canonical
+  "\n\n"-joined text, blocks with char offsets + kind, page map); DOCX via
+  python-docx heading styles, PDF via pdfplumber + clause-number regex,
+  plain text never yields headings (ADR-005); `UnsupportedParseError`
+- `app/services/chunking.py` — ADR-005 chunker (pure logic): clause-primary,
+  paragraph-seam fallback with 200-char overlap, whitespace-split last resort,
+  fixed windows for unstructured text; `MAX_CHUNK_CHARS = 8000` constant;
+  every chunk satisfies `text == parsed_text[char_start:char_end]`
 - `app/models/extraction_job.py` + `app/repositories/extraction_jobs.py` —
   job rows; claim via `FOR UPDATE SKIP LOCKED` (ADR-004)
 - `app/api/routes/extraction.py` — `POST /documents/{id}/extraction` → 202
@@ -56,7 +69,10 @@ real documents), Anthropic SDK spike (blocked on a real API key).
 - `evals/` — golden-record placeholder; JSONL format decision in `evals/README.md`
 - `docs/decisions/` — ADR-001 content-addressed storage; ADR-002 offset pagination;
   ADR-003 direct OpenAI SDK (no LLM framework); ADR-004 Postgres job rows
-- `alembic.ini` + `migrations/` — async Alembic; `documents`, `audit_log`
+- `alembic.ini` + `migrations/` — async Alembic; `documents`, `audit_log`,
+  `extraction_jobs`, `document_texts`, `document_chunks` (HNSW + GIN indexes),
+  `ingestion_jobs`; pgvector extension; job-status enum types are dropped in
+  downgrades (table drops alone leak them and break re-upgrade)
 - `Dockerfile` — multi-stage (uv builder → slim runtime, non-root); compose `app`
   service on :8000 with `uploads` volume; migrate via `docker compose run --rm app alembic upgrade head`
 - `.github/workflows/ci.yml` — ruff, mypy, pytest against real Postgres + image-build job
@@ -124,7 +140,7 @@ amendment, eval metric definitions, CONTEXT.md Chunk/Ingestion):
 
 Implementation blocks:
 
-- **W3·A** — migrations (pgvector extension, `document_texts`,
+- **W3·A** — DONE: migrations (pgvector extension, `document_texts`,
   `ingestion_jobs`, `document_chunks`) + parsers + chunker
 - **W3·B** — ingestion worker handler (lease/retry, status flips) +
   embeddings + round-robin worker loop
