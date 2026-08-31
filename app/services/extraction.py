@@ -22,7 +22,7 @@ import app.repositories.documents as documents_repo
 import app.repositories.extraction_jobs as extraction_jobs_repo
 import app.storage.local as local_storage
 from app.llm.client import LlmError, OpenAiClient
-from app.models.extraction_job import ExtractionJob
+from app.models.extraction_job import ExtractionJob, ExtractionJobStatus
 from app.request_context import current_request_id
 from app.services.documents import DocumentNotFoundError
 
@@ -43,6 +43,12 @@ class ExtractionJobNotFoundError(Exception):
     def __init__(self, job_id: uuid.UUID) -> None:
         self.job_id = job_id
         super().__init__(f"extraction job {job_id} not found")
+
+
+class ExtractionJobConflictError(Exception):
+    def __init__(self, job_id: uuid.UUID) -> None:
+        self.job_id = job_id
+        super().__init__(f"extraction job {job_id} is already queued or running")
 
 
 class Obligation(BaseModel):
@@ -73,13 +79,18 @@ async def enqueue_extraction(
 ) -> ExtractionJob:
     """Queue obligation extraction for one document; the worker does the LLM call.
 
-    Raises DocumentNotFoundError for unknown ids and other tenants' rows alike.
+    Raises DocumentNotFoundError for unknown ids and other tenants' rows alike,
+    and ExtractionJobConflictError while a job for the document is still queued
+    or running (re-run is allowed only from a terminal state).
     """
     document = await documents_repo.find_by_id(
         session, tenant_id=tenant_id, document_id=document_id
     )
     if document is None:
         raise DocumentNotFoundError(document_id)
+    active = await extraction_jobs_repo.find_active_for_document(session, document_id=document_id)
+    if active is not None:
+        raise ExtractionJobConflictError(active.id)
     job = await extraction_jobs_repo.create(session, tenant_id=tenant_id, document_id=document_id)
     logger.info(
         "extraction job queued tenant=%s document=%s job=%s", tenant_id, document_id, job.id
@@ -120,6 +131,10 @@ async def run_next_extraction_job(
     job = await extraction_jobs_repo.claim_next_queued(session)
     if job is None:
         return False
+    if job.status is ExtractionJobStatus.failed:
+        # Claimed past the attempt cap: already terminal, nothing to run.
+        logger.warning("extraction job capped tenant=%s job=%s", job.tenant_id, job.id)
+        return True
     try:
         document = await documents_repo.find_by_id(
             session, tenant_id=job.tenant_id, document_id=job.document_id

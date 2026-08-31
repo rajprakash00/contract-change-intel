@@ -22,6 +22,7 @@ from app.llm.client import (
 from tests.fake_openai import (
     TEST_KEY,
     completion_body,
+    fake_embedding_client,
     fake_llm_client,
     fake_streaming_llm_client,
     make_settings,
@@ -330,6 +331,43 @@ class TestCompleteWithTools:
 
         assert "tool handler failed" in str(excinfo.value)
         assert isinstance(excinfo.value.__cause__, RuntimeError)
+
+
+class TestEmbed:
+    async def test_returns_vectors_matched_to_input_texts(self) -> None:
+        # The wire deliberately returns data out of input order; the client
+        # must sort by index so vectors align with the texts that produced them.
+        vectors = [[1.0, 0.0], [0.0, 1.0], [0.5, 0.5]]
+        async with fake_embedding_client(vectors, prompt_tokens=9, data_order=[2, 0, 1]) as (
+            client,
+            requests,
+        ):
+            result = await client.embed(["a", "b", "c"])
+
+        assert result == vectors
+        sent = json.loads(requests[0].content)
+        assert sent["model"] == "text-embedding-3-small"
+        assert sent["input"] == ["a", "b", "c"]
+
+    async def test_logs_embedding_usage_and_cost(self, caplog: pytest.LogCaptureFixture) -> None:
+        async with fake_embedding_client([[1.0]], prompt_tokens=1_000_000) as (client, _):
+            with caplog.at_level(20, logger="app.llm.client"):
+                await client.embed(["text"])
+
+        # Independent worked example: 1M input tokens at $0.02 / 1M.
+        line = next(line for line in caplog.text.splitlines() if "llm call" in line)
+        assert "model=text-embedding-3-small" in line
+        assert "prompt_tokens=1000000" in line
+        assert "cost_usd=0.020000" in line
+        assert TEST_KEY not in caplog.text
+
+    async def test_wire_error_surfaces_as_llm_call_error(self) -> None:
+        async with httpx2.AsyncClient(
+            transport=httpx2.MockTransport(lambda request: httpx2.Response(500, content=b"boom"))
+        ) as wire:
+            client = OpenAiClient(make_settings(), http_client=wire)
+            with pytest.raises(LlmCallError):
+                await client.embed(["text"])
 
 
 class TestStreamAbortAccounting:

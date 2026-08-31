@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from app.llm.client import LlmCallError, LlmNotConfiguredError, LlmOutputError
 from app.schemas.documents import DocumentConflictDetail
+from app.schemas.ingestion import JobConflictDetail
 from app.services.documents import (
     ALLOWED_MIME_TYPES,
     DocumentAlreadyExistsError,
@@ -18,7 +19,8 @@ from app.services.documents import (
     MimeNotAllowedError,
     UploadTooLargeError,
 )
-from app.services.extraction import ExtractionJobNotFoundError
+from app.services.extraction import ExtractionJobConflictError, ExtractionJobNotFoundError
+from app.services.ingestion import IngestionJobConflictError, IngestionJobNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +58,18 @@ async def _extraction_job_not_found(_: Request, exc: ExtractionJobNotFoundError)
     return _detail_response(status.HTTP_404_NOT_FOUND, str(exc))
 
 
+async def _ingestion_job_not_found(_: Request, exc: IngestionJobNotFoundError) -> JSONResponse:
+    return _detail_response(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+async def _job_conflict(
+    _: Request, exc: ExtractionJobConflictError | IngestionJobConflictError
+) -> JSONResponse:
+    # Same re-run rule on both job surfaces: 409 while a job is queued/running.
+    detail = JobConflictDetail(existing_job_id=exc.job_id).model_dump(mode="json")
+    return _detail_response(status.HTTP_409_CONFLICT, detail)
+
+
 # LlmError has no raising route today (LLM calls live in the worker, not the
 # request path); the mapping exists so any future synchronous surface inherits
 # the app-wide table instead of inventing per-route handling.
@@ -81,6 +95,9 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.exception_handler(DocumentAlreadyExistsError)(_document_already_exists)
     app.exception_handler(DocumentNotFoundError)(_document_not_found)
     app.exception_handler(ExtractionJobNotFoundError)(_extraction_job_not_found)
+    app.exception_handler(IngestionJobNotFoundError)(_ingestion_job_not_found)
+    app.exception_handler(ExtractionJobConflictError)(_job_conflict)
+    app.exception_handler(IngestionJobConflictError)(_job_conflict)
     app.exception_handler(LlmCallError)(_llm_call_error)
     app.exception_handler(LlmOutputError)(_llm_output_error)
     app.exception_handler(LlmNotConfiguredError)(_llm_not_configured)

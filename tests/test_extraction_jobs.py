@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.db as db
@@ -23,6 +23,7 @@ from app.repositories import documents as documents_repo
 from app.repositories import extraction_jobs as jobs_repo
 from app.services.documents import DocumentNotFoundError
 from app.services.extraction import (
+    ExtractionJobConflictError,
     ExtractionJobNotFoundError,
     enqueue_extraction,
     get_extraction_job,
@@ -104,6 +105,33 @@ class TestEnqueueExtraction:
         with pytest.raises(DocumentNotFoundError):
             async with session() as s:
                 await enqueue_extraction(s, tenant_id=uuid.uuid4(), document_id=uuid.uuid4())
+
+    async def test_enqueue_while_a_job_is_active_conflicts_with_existing_job_id(self) -> None:
+        tenant_id = uuid.uuid4()
+        document = await make_document(tenant_id)
+        async with session() as s:
+            first = await enqueue_extraction(s, tenant_id=tenant_id, document_id=document.id)
+
+        with pytest.raises(ExtractionJobConflictError) as excinfo:
+            async with session() as s:
+                await enqueue_extraction(s, tenant_id=tenant_id, document_id=document.id)
+
+        assert excinfo.value.job_id == first.id
+
+    async def test_enqueue_after_a_terminal_job_starts_a_new_run(self) -> None:
+        tenant_id = uuid.uuid4()
+        document = await make_document(tenant_id)
+        async with session() as s:
+            await enqueue_extraction(s, tenant_id=tenant_id, document_id=document.id)
+        async with session() as s:
+            row = (await s.execute(select(ExtractionJob))).scalar_one()
+            row.status = ExtractionJobStatus.completed
+            await s.commit()
+
+        async with session() as s:
+            second = await enqueue_extraction(s, tenant_id=tenant_id, document_id=document.id)
+
+        assert second.status is ExtractionJobStatus.queued
 
 
 class TestGetExtractionJob:
