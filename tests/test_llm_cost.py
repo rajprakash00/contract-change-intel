@@ -36,3 +36,15 @@ def test_pricing_for_returns_declared_table_entry() -> None:
     assert isinstance(pricing, ModelPricing)
     assert pricing.input_per_million == pytest.approx(0.15)
     assert pricing.output_per_million == pytest.approx(0.60)
+
+
+def test_embedding_model_cost_matches_published_pricing() -> None:
+    # text-embedding-3-small: $0.02 / 1M input tokens, no output tokens.
+    cost = cost_usd("text-embedding-3-small", prompt_tokens=1_000_000, completion_tokens=0)
+    assert cost == pytest.approx(0.02)
+
+
+def test_embedding_model_with_completion_tokens_costs_input_only() -> None:
+    # Embeddings never produce completion tokens; the entry must not price them.
+    cost = cost_usd("text-embedding-3-small", prompt_tokens=1_500, completion_tokens=10)
+    assert cost == pytest.approx(0.00003)

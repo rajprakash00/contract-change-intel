@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o-mini"
+    # W3 ingestion embeddings (ADR-006): text-embedding-3-small is 1536-dim,
+    # matching EMBEDDING_DIMENSIONS on DocumentChunk.
+    openai_embedding_model: str = "text-embedding-3-small"
     openai_timeout_seconds: float = 60.0
     # Retries (with jittered backoff) and 429 handling are delegated to the SDK;
     # this only bounds how hard it tries before surfacing an LlmError.

@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 import app.db as db
-from app.api.routes import documents, extraction, health
+from app.api.routes import documents, extraction, health, ingestion
 from app.config import get_settings
 from app.errors import register_exception_handlers
 from app.logging_config import configure_logging
@@ -31,6 +31,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(documents.router)
     app.include_router(extraction.router)
+    app.include_router(ingestion.router)
     register_exception_handlers(app)
     return app
 

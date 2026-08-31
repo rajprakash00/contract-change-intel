@@ -4,17 +4,22 @@ State: week 1 complete (W1·A foundations, W1·B read paths, W1·C hardening + g
 **W2·A LLM reliability foundations** (OpenAI settings, thin client wrapper,
 structured-outputs skeleton, evals placeholder), **W2·B LLM calling + eval
 baseline** (extraction HTTP surface behind a Postgres job row + worker, streaming,
-tool-calling skeleton, LlmError HTTP mapping), and **W3·A ingestion schema +
+tool-calling skeleton, LlmError HTTP mapping), **W3·A ingestion schema +
 parsers + chunker** (pgvector/document_texts/ingestion_jobs/document_chunks
 migrations incl. ADR-004 lease columns on both job tables, pdfplumber +
-python-docx parsers with canonical char-offset text, ADR-005 chunker); ruff/mypy
-clean, 95 integration+unit tests green. Remaining W2 items: first golden records
-(blocked on real documents), Anthropic SDK spike (blocked on a real API key).
+python-docx parsers with canonical char-offset text, ADR-005 chunker), and
+**W3·B ingestion pipeline end-to-end** (shared lease-at-claim helper for both
+job tables, OpenAI embeddings in the LLM client, ingestion worker handler with
+terminal document-status flips, POST/GET ingestion HTTP surface with 409
+re-run rules — now symmetric on extraction too, round-robin worker loop);
+ruff/mypy clean, 146 integration+unit tests green. Remaining W2 items: first
+golden records (blocked on real documents), Anthropic SDK spike (blocked on a
+real API key).
 
 ## Map
 
 - `app/config.py` — Settings (.env): `database_url` (host port **5433**), `data_dir`,
-  `max_upload_mb`, `log_level`
+  `max_upload_mb`, `log_level`, `openai_embedding_model` (W3·B)
 - `app/db.py` — engine/sessionmaker lifecycle owned by lifespan; `get_session` dep
 - `app/main.py` — `create_app()`; lifespan, mounts route routers, error handlers
 - `app/middleware.py` — pure-ASGI request-ID middleware (echo/sanitize/generate,
@@ -43,7 +48,8 @@ clean, 95 integration+unit tests green. Remaining W2 items: first golden records
   structured `llm call` log line per call (tokens, cost, latency),
   `stream_complete()` (delta streaming, usage logged at stream end),
   `complete_with_tools()` + `LlmTool` (tool-calling skeleton, bounded loop,
-  read-only-by-contract handlers — rules in `docs/llm-boundaries.md`)
+  read-only-by-contract handlers — rules in `docs/llm-boundaries.md`),
+  `embed()` (W3·B; re-sorts wire data by index so vectors align with inputs)
 - `app/llm/cost.py` — pure token→USD math; pricing table locked by unit tests
 - `app/services/extraction.py` — structured-outputs skeleton: `ObligationExtraction`
    schema + `extract_obligations()`; job lifecycle: `enqueue_extraction` (queued
@@ -60,11 +66,29 @@ clean, 95 integration+unit tests green. Remaining W2 items: first golden records
   every chunk satisfies `text == parsed_text[char_start:char_end]`
 - `app/models/extraction_job.py` + `app/repositories/extraction_jobs.py` —
   job rows; claim via `FOR UPDATE SKIP LOCKED` (ADR-004)
+- `app/repositories/job_claims.py` — shared claim/lease mechanics for both
+  job tables (ADR-004 amendment): eligible = queued or running with expired
+  lease; claim sets a 15-min lease + increments `attempts`; past the cap
+  (3) a row claims straight into `failed max_attempts_exceeded`
+- `app/services/ingestion.py` — ingestion pipeline service: `enqueue_ingestion`
+  (409 while queued/running per document; re-run from terminal state),
+  `get_ingestion_job`, `run_next_ingestion_job` (worker handler: parse →
+  chunk → embed → delete-then-insert document_texts/document_chunks; flips
+  `Document.status` to `parsed`/`failed` on terminal states; every failure
+  becomes a failed job row — parser exceptions are an open set, so the
+  handler catches broadly)
+- `app/repositories/ingestion_jobs.py`, `document_texts.py`,
+  `document_chunks.py` — job rows + replace-style writes for re-runs
+- `app/api/routes/ingestion.py` — `POST /documents/{id}/ingestion` → 202
+  queued job; `GET /ingestion-jobs/{id}` polls status/result (tenant-scoped);
+  409 detail `{"existing_job_id": ...}` shared with extraction
+- `app/worker.py` — worker process (`python -m app.worker`): fails fast
+  without an API key, round-robin claims across extraction + ingestion
+  queues (rotation index per pass; a backlog in one queue can't starve the
+  other), polls when idle
 - `app/api/routes/extraction.py` — `POST /documents/{id}/extraction` → 202
   queued job; `GET /extraction-jobs/{id}` polls status/result (tenant-scoped)
-- `app/worker.py` — worker process (`python -m app.worker`): fails fast
-  without an API key, claims queued extraction jobs, polls when idle
-- `app/errors.py` — domain exception → 415/413/409/404/502/503 mapping,
+- `app/errors.py` — domain exception → 404/409/415/413/502/503 mapping,
   registered once (LlmError → 502/503 ready for future sync surfaces)
 - `evals/` — golden-record placeholder; JSONL format decision in `evals/README.md`
 - `docs/decisions/` — ADR-001 content-addressed storage; ADR-002 offset pagination;
@@ -142,8 +166,10 @@ Implementation blocks:
 
 - **W3·A** — DONE: migrations (pgvector extension, `document_texts`,
   `ingestion_jobs`, `document_chunks`) + parsers + chunker
-- **W3·B** — ingestion worker handler (lease/retry, status flips) +
-  embeddings + round-robin worker loop
+- **W3·B** — DONE: ingestion worker handler (lease/retry, status flips) +
+  embeddings + round-robin worker loop; plus the settled HTTP surface
+  (`POST /documents/{id}/ingestion`, `GET /ingestion-jobs/{id}`) and the 409
+  re-run rules, made symmetric on extraction
 - **W3·C** — `GET /search` (RRF hybrid) + citation spans + eval harness for
   the defined metrics
 - **W3·D** — first golden records when real documents land; verify gate

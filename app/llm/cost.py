@@ -17,6 +17,9 @@ class ModelPricing:
 _PRICES: dict[str, ModelPricing] = {
     "gpt-4o-mini": ModelPricing(input_per_million=0.15, output_per_million=0.60),
     "gpt-4o": ModelPricing(input_per_million=2.50, output_per_million=10.00),
+    # Embedding model (W3 ingestion); it produces no output tokens, so the
+    # output price is declared 0 rather than left to a special case.
+    "text-embedding-3-small": ModelPricing(input_per_million=0.02, output_per_million=0.0),
 }
 
 

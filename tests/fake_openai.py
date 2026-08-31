@@ -185,3 +185,53 @@ async def fake_streaming_llm_client(
     finally:
         # OpenAiClient.aclose() skips caller-owned wires; close ours here.
         await wire.aclose()
+
+
+def embeddings_body(
+    vectors: list[list[float]],
+    *,
+    prompt_tokens: int = 1,
+    data_order: list[int] | None = None,
+) -> dict[str, Any]:
+    """Embeddings wire body.
+
+    `data_order` (a permutation of range(len(vectors))) shuffles the data list
+    while keeping each item's index paired with its vector — the server is
+    free to return embeddings in any order.
+    """
+    items = [
+        {"object": "embedding", "index": index, "embedding": vector}
+        for index, vector in enumerate(vectors)
+    ]
+    if data_order is not None:
+        items = [items[i] for i in data_order]
+    return {
+        "object": "list",
+        "data": items,
+        "model": "text-embedding-3-small",
+        "usage": {"prompt_tokens": prompt_tokens, "total_tokens": prompt_tokens},
+    }
+
+
+@asynccontextmanager
+async def fake_embedding_client(
+    vectors: list[list[float]],
+    *,
+    prompt_tokens: int = 1,
+    data_order: list[int] | None = None,
+) -> AsyncIterator[tuple[OpenAiClient, list[httpx2.Request]]]:
+    """One client whose wire always answers /embeddings with the given vectors."""
+    requests: list[httpx2.Request] = []
+    payload = embeddings_body(vectors, prompt_tokens=prompt_tokens, data_order=data_order)
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, content=json.dumps(payload).encode())
+
+    wire = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    client = OpenAiClient(make_settings(), http_client=wire)
+    try:
+        yield client, requests
+    finally:
+        # OpenAiClient.aclose() skips caller-owned wires; close ours here.
+        await wire.aclose()

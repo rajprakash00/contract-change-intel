@@ -67,6 +67,14 @@ async def count_for_tenant(session: AsyncSession, *, tenant_id: uuid.UUID) -> in
     return result.scalar_one()
 
 
+async def set_status(session: AsyncSession, document: Document, status: DocumentStatus) -> Document:
+    """Flip a document's lifecycle status (worker-side terminal ingestion states)."""
+    document.status = status
+    await session.commit()
+    await session.refresh(document)
+    return document
+
+
 async def delete(session: AsyncSession, document: Document) -> None:
     await session.delete(document)
     await session.commit()

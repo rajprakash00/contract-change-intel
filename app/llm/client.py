@@ -97,6 +97,7 @@ class OpenAiClient:
         if not settings.openai_api_key:
             raise LlmNotConfiguredError()
         self._model = settings.openai_model
+        self._embedding_model = settings.openai_embedding_model
         self._timeout = httpx2.Timeout(settings.openai_timeout_seconds)
         self._owns_client = http_client is None
         self._client = AsyncOpenAI(
@@ -129,7 +130,7 @@ class OpenAiClient:
         except OpenAIError as exc:
             raise LlmCallError(self._model, exc) from exc
         prompt_tokens, completion_tokens, cost = self._usage_cost(response.usage)
-        self._log_usage(prompt_tokens, completion_tokens, cost, started)
+        self._log_usage(self._model, prompt_tokens, completion_tokens, cost, started)
         text = response.choices[0].message.content or ""
         return LlmResult(
             text=text,
@@ -172,12 +173,34 @@ class OpenAiClient:
         except OpenAIError as exc:
             raise LlmCallError(self._model, exc) from exc
         prompt_tokens, completion_tokens, cost = self._usage_cost(response.usage)
-        self._log_usage(prompt_tokens, completion_tokens, cost, started)
+        self._log_usage(self._model, prompt_tokens, completion_tokens, cost, started)
         parsed = response.choices[0].message.parsed
         if parsed is None:
             # Refusal path: usage arrived with the response, so it is logged.
             raise LlmOutputError(rejected)
         return parsed
+
+    async def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        """Embed texts with the configured embedding model, one vector per text.
+
+        The wire may return data out of input order; vectors are re-sorted by
+        index so result[i] always corresponds to texts[i]. Raises LlmCallError
+        when the call fails.
+        """
+        started = time.monotonic()
+        try:
+            response = await self._client.embeddings.create(
+                model=self._embedding_model,
+                input=list(texts),
+                timeout=self._timeout,
+            )
+        except OpenAIError as exc:
+            raise LlmCallError(self._embedding_model, exc) from exc
+        prompt_tokens = response.usage.prompt_tokens if response.usage else 0
+        cost = cost_usd(self._embedding_model, prompt_tokens=prompt_tokens, completion_tokens=0)
+        self._log_usage(self._embedding_model, prompt_tokens, 0, cost, started)
+        by_index = sorted(response.data, key=lambda item: item.index)
+        return [item.embedding for item in by_index]
 
     async def stream_complete(self, *, system: str, user: str) -> AsyncIterator[str]:
         """Stream one chat completion, yielding text deltas as they arrive.
@@ -220,7 +243,7 @@ class OpenAiClient:
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
             )
-            self._log_usage(prompt_tokens, completion_tokens, cost, started)
+            self._log_usage(self._model, prompt_tokens, completion_tokens, cost, started)
             logged = True
         finally:
             if not logged:
@@ -279,7 +302,7 @@ class OpenAiClient:
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                 )
-                self._log_usage(prompt_tokens, completion_tokens, cost, started)
+                self._log_usage(self._model, prompt_tokens, completion_tokens, cost, started)
                 return LlmResult(
                     text=message.content or "",
                     model=self._model,
@@ -328,12 +351,12 @@ class OpenAiClient:
         )
 
     def _log_usage(
-        self, prompt_tokens: int, completion_tokens: int, cost: float, started: float
+        self, model: str, prompt_tokens: int, completion_tokens: int, cost: float, started: float
     ) -> None:
         latency_ms = int((time.monotonic() - started) * 1000)
         logger.info(
             "llm call model=%s prompt_tokens=%d completion_tokens=%d cost_usd=%.6f latency_ms=%d",
-            self._model,
+            model,
             prompt_tokens,
             completion_tokens,
             cost,
