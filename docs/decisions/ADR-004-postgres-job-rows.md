@@ -31,7 +31,8 @@ Consequences:
   sessions as the API.
 - Known gap: a worker crash mid-run leaves the row `running` forever. Retry
   policy (requeue stale rows, attempt counters, dead-letter) is deferred to
-  the W3 ingestion pipeline, which must define it for its own jobs anyway.
+  the W3 ingestion pipeline, which must define it for its own jobs anyway —
+  resolved by the amendment below.
 - Long-polling clients would be nicer than `GET` polling; postponed until a
   UI exists to need it.
 
@@ -41,3 +42,16 @@ Celery/Redis (or any broker). Rejected because it adds a second stateful
 system to operate before there is a scaling need, and job state would live
 outside the database that already holds the documents and audit trail —
 worse for the auditability this product exists to provide.
+
+## Amendment (W3): lease-at-claim retry
+
+The known gap above is closed by giving both job tables (`extraction_jobs`,
+`ingestion_jobs`) three extra columns: `attempts`, `lease_expires_at`, and
+(max) `error`. Claim selects rows that are `queued` **or** `running` with an
+expired lease, oldest first; claiming sets `lease_expires_at = now() + 15 min`
+and increments `attempts`. A crashed worker's rows become claimable again
+after the lease lapses — no sweeper process, no heartbeats: the lease is
+checked where the claim already runs, in the same `SKIP LOCKED` transaction.
+`attempts > 3` claims into `failed` with reason `max_attempts_exceeded`
+instead of re-running. Lease duration and attempt cap are constants, not
+settings knobs.
