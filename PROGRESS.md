@@ -7,12 +7,17 @@ baseline** (extraction HTTP surface behind a Postgres job row + worker, streamin
 tool-calling skeleton, LlmError HTTP mapping), **W3·A ingestion schema +
 parsers + chunker** (pgvector/document_texts/ingestion_jobs/document_chunks
 migrations incl. ADR-004 lease columns on both job tables, pdfplumber +
-python-docx parsers with canonical char-offset text, ADR-005 chunker), and
+python-docx parsers with canonical char-offset text, ADR-005 chunker),
 **W3·B ingestion pipeline end-to-end** (shared lease-at-claim helper for both
 job tables, OpenAI embeddings in the LLM client, ingestion worker handler with
 terminal document-status flips, POST/GET ingestion HTTP surface with 409
-re-run rules — now symmetric on extraction too, round-robin worker loop);
-ruff/mypy clean, 146 integration+unit tests green. Remaining W2 items: first
+re-run rules — now symmetric on extraction too, round-robin worker loop), and
+**W3·C hybrid search + eval harness** (`GET /search` with pgvector +
+full-text rankings fused by RRF-60 in the request path — the first
+synchronous LLM surface, via a per-request client dep; hits carry citation
+spans into parsed text; pure metric math + golden-record harness in
+`evals/`);
+ruff/mypy clean, 187 integration+unit tests green. Remaining W2 items: first
 golden records (blocked on real documents), Anthropic SDK spike (blocked on a
 real API key).
 
@@ -27,7 +32,8 @@ real API key).
 - `app/request_context.py` — leaf module holding `request_id_ctx`; shared by
   middleware, logging filter, and services (audit correlation)
 - `app/logging_config.py` — root logging + `RequestIdFilter` (`request_id=` on every line)
-- `app/api/deps.py` — shared deps (`SessionDep`, `SettingsDep`, tenant `Header`)
+- `app/api/deps.py` — shared deps (`SessionDep`, `SettingsDep`, tenant `Header`,
+  per-request `OpenAiClient` dep for the search surface)
 - `app/api/routes/documents.py` — POST upload; GET list (`limit`/`offset` page
   envelope), GET by id, GET `/content` download, DELETE
 - `app/api/routes/health.py` — `GET /healthz` probe
@@ -88,6 +94,17 @@ real API key).
   other), polls when idle
 - `app/api/routes/extraction.py` — `POST /documents/{id}/extraction` → 202
   queued job; `GET /extraction-jobs/{id}` polls status/result (tenant-scoped)
+- `app/services/search.py` — hybrid search (ADR-006): embeds the query in the
+   request path, ranks chunks via pgvector cosine + Postgres FTS `ts_rank`,
+   fuses both rankings with RRF (k=60 fixed; `rrf_fuse` is pure, unit-tested),
+   returns `SearchHit`s whose char_start/char_end are citation spans into the
+   document's parsed text; tenant-scoped, cross-document
+- `app/api/routes/search.py` — `GET /search?q=&limit=` (limit default 10,
+  cap 50); 503 unconfigured key / 502 failed query embed via the error table
+- `evals/metrics.py` — pure metric math (recall@k, mechanical citation-span
+   validity, extraction precision/recall on clause_ref+owner), unit-tested;
+   `evals/harness.py` — golden-record CLI over `golden/<task>.jsonl`
+   (`retrieve`, `extract_obligations`), JSON report with per-id scores
 - `app/errors.py` — domain exception → 404/409/415/413/502/503 mapping,
   registered once (LlmError → 502/503 ready for future sync surfaces)
 - `evals/` — golden-record placeholder; JSONL format decision in `evals/README.md`
@@ -170,8 +187,10 @@ Implementation blocks:
   embeddings + round-robin worker loop; plus the settled HTTP surface
   (`POST /documents/{id}/ingestion`, `GET /ingestion-jobs/{id}`) and the 409
   re-run rules, made symmetric on extraction
-- **W3·C** — `GET /search` (RRF hybrid) + citation spans + eval harness for
-  the defined metrics
+- **W3·C** — DONE: `GET /search` (RRF hybrid, first synchronous LLM surface
+  via a per-request client dep) + citation spans on hits + eval harness for
+  the mechanical metrics (recall@k, citation-span validity, extraction
+  precision/recall)
 - **W3·D** — first golden records when real documents land; verify gate
 
 Still blocked (owner): real documents (golden records), live

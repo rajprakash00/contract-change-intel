@@ -3,6 +3,7 @@ import uuid
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.document import Document
 from app.models.document_chunk import DocumentChunk
 
 
@@ -51,3 +52,46 @@ async def replace_with_embeddings(
     session.add_all(rows)
     await session.flush()
     return rows
+
+
+async def rank_by_similarity(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    embedding: list[float],
+    limit: int,
+) -> list[tuple[DocumentChunk, Document]]:
+    """The vector half of hybrid search (ADR-006): nearest chunks by cosine
+    distance, best first, joined with their owning document. Tenant-scoped;
+    chunks without embeddings (never written by the pipeline) are skipped.
+    """
+    result = await session.execute(
+        select(DocumentChunk, Document)
+        .join(Document, Document.id == DocumentChunk.document_id)
+        .where(DocumentChunk.tenant_id == tenant_id, DocumentChunk.embedding.is_not(None))
+        .order_by(DocumentChunk.embedding.cosine_distance(embedding))
+        .limit(limit)
+    )
+    return [(chunk, document) for chunk, document in result.all()]
+
+
+async def rank_by_full_text(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    query: str,
+    limit: int,
+) -> list[tuple[DocumentChunk, Document]]:
+    """The full-text half of hybrid search (ADR-006): chunks whose generated
+    tsvector matches the query's plain tsquery, best ts_rank first. Only
+    exact/stemmed tokens match here; paraphrase recall is the vector half's job.
+    """
+    tsquery = func.plainto_tsquery("english", query)
+    result = await session.execute(
+        select(DocumentChunk, Document)
+        .join(Document, Document.id == DocumentChunk.document_id)
+        .where(DocumentChunk.tenant_id == tenant_id, DocumentChunk.tsv.op("@@")(tsquery))
+        .order_by(func.ts_rank(DocumentChunk.tsv, tsquery).desc())
+        .limit(limit)
+    )
+    return [(chunk, document) for chunk, document in result.all()]
