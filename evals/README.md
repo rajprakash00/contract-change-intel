@@ -50,3 +50,33 @@ outgrows files, the harness — not the format — moves.
 `golden/` is empty until the W3 ingestion pipeline produces the first
 extractable documents; records are added with their source documents under
 `fixtures/` at that point.
+
+## Harness
+
+`evals/harness.py` runs a task's golden records through the real pipeline and
+prints a JSON report (aggregate metrics + per-id scores, so regressions are
+attributable):
+
+```sh
+uv run python -m evals.harness --task retrieve --k 5 --k 10
+uv run python -m evals.harness --task extract_obligations
+```
+
+Per-task record shapes:
+
+- `retrieve` — input `{"tenant_id", "query"}`; expected `{"chunks":
+  [{"document_sha256", "ordinal"}]}`. A retrieved chunk is keyed by its
+  document's sha256 plus its ordinal, which survives re-ingestion (chunk UUIDs
+  do not). Scored with recall@k.
+- `extract_obligations` — input `{"document_sha256", "text"}`; expected
+  `{"obligations": [{"clause_ref", "owner"}]}`. Scored with precision/recall
+  matched on (clause_ref, owner); the sha ties the record to the stored source
+  bytes for citation checking once extraction emits Citations.
+
+Metric math is pure (`evals/metrics.py`, unit-tested); the harness only wires
+records → pipeline → scores. Two metric parts await producers, not harness
+work: citation validity awaits a Citations producer (extraction emits none
+yet; the mechanical span check is `citation_span_valid`), and graded
+description comparison awaits a grader (free text is not exact-matchable).
+Task completion needs the human rubric. Latency/cost come from the
+structured `llm call` traces, not this harness.
