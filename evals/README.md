@@ -47,9 +47,37 @@ Why JSONL over a database table: fixtures are versioned with the code, diff
 cleanly in review, and load without infrastructure. If eval scale ever
 outgrows files, the harness — not the format — moves.
 
-`golden/` is empty until the W3 ingestion pipeline produces the first
-extractable documents; records are added with their source documents under
-`fixtures/` at that point.
+`golden/` holds the first records (W3·D), drafted from the CUAD fixture
+documents under `fixtures/cuad/` (CC BY 4.0, see its ATTRIBUTION.md): six
+small, text-extractable contracts with diverse clause coverage, selected via
+`master_clauses.csv`. **The expected values are agent-drafted and pending
+owner review** — treat them as provisional ground truth until reviewed.
+`fixture_shas.json` pins each fixture's sha256; the
+tests in `tests/test_golden_records.py` fail fast if a fixture is re-saved
+without regenerating the records keyed by it.
+
+Seeding / re-seeding (needs `OPENAI_API_KEY` and the dev database, so it is a
+manual step, not part of pytest):
+
+```sh
+uv run python -m evals.seed_fixtures   # uploads fixtures + ingests them
+```
+
+It seeds a fixed eval tenant (`00000000-0000-4000-8000-00000000c0ad`) so the
+committed records' `tenant_id` stays valid across re-seeds, and is idempotent:
+existing parsed uploads are skipped. It prints a manifest (sha256 + chunk
+counts) for drafting; commit records, not the manifest.
+
+Record caveats learned while drafting:
+
+- `extract_obligations` `owner` matching is case-insensitive in the metric
+  (contracts shout party names); beyond case it is exact, so golden owners use
+  the party label as the clause itself names it.
+- Extraction input text is an exact slice of the document's parsed text (built
+  from chunk char ranges). Slices that straddle a cross-referenced clause
+  produce legitimately ambiguous expectations — prefer self-contained clauses.
+- The LLM runs at default temperature, so single-run precision on ambiguous
+  text wobbles; interpret per-record scores as baselines, not determinisms.
 
 ## Harness
 

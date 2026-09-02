@@ -99,6 +99,15 @@ class TestExtractionPrecisionRecall:
         assert precision == 0.0
         assert recall == 0.0
 
+    def test_owner_matches_case_insensitively(self) -> None:
+        """Locks the case-insensitivity rationale documented in metrics.py."""
+        precision, recall = extraction_precision_recall(
+            [("2.1", "Licensor")], [("2.1", "LICENSOR")]
+        )
+
+        assert precision == 1.0
+        assert recall == 1.0
+
     def test_duplicate_matches_are_counted_once(self) -> None:
         precision, recall = extraction_precision_recall(
             [("8.2", "Supplier")], [("8.2", "Supplier"), ("8.2", "Supplier")]
