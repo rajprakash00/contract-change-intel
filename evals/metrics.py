@@ -37,9 +37,18 @@ def extraction_precision_recall(
 ) -> tuple[float, float]:
     """Extraction accuracy matched on (clause_ref, owner); descriptions are
     free text and graded separately, per the metric definition in README.md.
+
+    Owner matching is case-insensitive: contracts shout party names
+    ("LICENSOR shall deliver") and a correct extraction must not lose the
+    match to capitalisation alone.
     """
-    expected_set = set(expected)
-    actual_set = set(actual)
+
+    def key(pair: tuple[str, str | None]) -> tuple[str, str | None]:
+        clause_ref, owner = pair
+        return (clause_ref, owner.casefold() if owner is not None else None)
+
+    expected_set = {key(pair) for pair in expected}
+    actual_set = {key(pair) for pair in actual}
     matched = len(expected_set & actual_set)
     # Precision's denominator keeps duplicates from `actual` on purpose: a
     # model emitting the same obligation twice has double-extracted, and the

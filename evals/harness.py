@@ -29,10 +29,11 @@ golden/ directory the harness says so and exits 0.
 import argparse
 import asyncio
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.db import dispose_engine, get_sessionmaker, init_engine
 from app.llm.client import OpenAiClient
 from app.services.extraction import extract_obligations
@@ -77,7 +78,10 @@ def _aggregate(per_record: dict[str, dict[str, float]], names: list[str]) -> dic
 
 
 async def run_retrieve(
-    records: list[dict[str, Any]], llm: OpenAiClient, ks: list[int]
+    records: list[dict[str, Any]],
+    llm: OpenAiClient,
+    ks: list[int],
+    settings: Settings,
 ) -> dict[str, Any]:
     per_record: dict[str, dict[str, float]] = {}
     async with get_sessionmaker()() as session:
@@ -104,10 +108,13 @@ async def run_retrieve(
         "records": len(per_record),
         "metrics": _aggregate(per_record, metric_names),
         "per_record": per_record,
+        "embedding_model": settings.openai_embedding_model,
     }
 
 
-async def run_extraction(records: list[dict[str, Any]], llm: OpenAiClient) -> dict[str, Any]:
+async def run_extraction(
+    records: list[dict[str, Any]], llm: OpenAiClient, settings: Settings
+) -> dict[str, Any]:
     per_record: dict[str, dict[str, float]] = {}
     for record in records:
         expected = [(o["clause_ref"], o["owner"]) for o in record["expected"]["obligations"]]
@@ -123,11 +130,26 @@ async def run_extraction(records: list[dict[str, Any]], llm: OpenAiClient) -> di
     }
 
 
+def _stamp(report: dict[str, Any], settings: Settings) -> dict[str, Any]:
+    """Make a stored report self-describing: what ran it and when. Reports
+    land in evals/runs/ (gitignored) or evals/baselines/ (committed), where
+    a JSON blob without provenance is uninterpretable months later."""
+    report["model"] = settings.openai_model
+    report["generated_at"] = datetime.now(UTC).isoformat(timespec="seconds")
+    return report
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser(description="Run golden-record evals.")
     parser.add_argument("--task", required=True, choices=("retrieve", "extract_obligations"))
     parser.add_argument(
         "--k", type=int, action="append", default=[], help="recall@k (retrieve only)"
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="also write the JSON report to this path (e.g. evals/runs/<date>-<task>.json)",
     )
     args = parser.parse_args()
 
@@ -141,12 +163,21 @@ async def main() -> int:
     init_engine(settings.database_url)
     try:
         if args.task == "retrieve":
-            report = await run_retrieve(records, llm, ks=args.k or list(DEFAULT_KS))
+            report = await run_retrieve(
+                records, llm, ks=args.k or list(DEFAULT_KS), settings=settings
+            )
         else:
-            report = await run_extraction(records, llm)
+            report = await run_extraction(records, llm, settings=settings)
     finally:
         await llm.aclose()
         await dispose_engine()
+    report = _stamp(report, settings)
+    if args.out:
+        out = Path(args.out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        payload = json.dumps(report, indent=2) + "\n"
+        await asyncio.to_thread(out.write_text, payload, "utf-8")
+        print(f"report written to {out}")
     print(json.dumps(report, indent=2))
     return 0
 

@@ -17,9 +17,9 @@ full-text rankings fused by RRF-60 in the request path — the first
 synchronous LLM surface, via a per-request client dep; hits carry citation
 spans into parsed text; pure metric math + golden-record harness in
 `evals/`);
-ruff/mypy clean, 187 integration+unit tests green. Remaining W2 items: first
-golden records (blocked on real documents), Anthropic SDK spike (blocked on a
-real API key).
+ruff/mypy clean, 194 integration+unit tests green. Remaining W2 items:
+~~first golden records (blocked on real documents)~~ done as W3·D, Anthropic
+SDK spike (blocked on a real API key).
 
 ## Map
 
@@ -107,7 +107,12 @@ real API key).
    (`retrieve`, `extract_obligations`), JSON report with per-id scores
 - `app/errors.py` — domain exception → 404/409/415/413/502/503 mapping,
   registered once (LlmError → 502/503 ready for future sync surfaces)
-- `evals/` — golden-record placeholder; JSONL format decision in `evals/README.md`
+- `evals/` — golden records (W3·D) + harness; JSONL format + seeding workflow
+  in `evals/README.md`; `seed_fixtures.py` re-seeds the fixed eval tenant from
+  `fixtures/cuad/`; `fixture_shas.json` pins fixtures to the records;
+  `baselines/` holds the committed per-task score snapshots, `runs/` is
+  gitignored raw-report output via the harness `--out` flag
+- `fixtures/cuad/` — 6 CUAD v1 source contracts (CC BY 4.0, ATTRIBUTION.md)
 - `docs/decisions/` — ADR-001 content-addressed storage; ADR-002 offset pagination;
   ADR-003 direct OpenAI SDK (no LLM framework); ADR-004 Postgres job rows
 - `alembic.ini` + `migrations/` — async Alembic; `documents`, `audit_log`,
@@ -191,10 +196,23 @@ Implementation blocks:
   via a per-request client dep) + citation spans on hits + eval harness for
   the mechanical metrics (recall@k, citation-span validity, extraction
   precision/recall)
-- **W3·D** — first golden records when real documents land; verify gate
+- **W3·D** — DONE: 6 CUAD v1 contracts (CC BY 4.0) under `fixtures/cuad/`
+  (small, pdfplumber-extractable, diverse clause coverage via
+  `master_clauses.csv`; extraction failures get swapped, not fixed) + first
+  golden records: 12 `retrieve` + 6 `extract_obligations` records in
+  `evals/golden/`, seeded through the real pipeline into a fixed eval tenant
+  by `evals/seed_fixtures.py`; `evals/fixture_shas.json` + shape tests lock
+  records to fixtures; grader owner-matching is case-insensitive.
+  Baselines: recall@5 0.82 / recall@10 0.96; extraction precision 0.82 /
+  recall 1.0. Golden records reviewed and approved by the owner; committed
+  baselines in `evals/baselines/` snapshot the accepted scores, raw reports
+  go to gitignored `evals/runs/` via the harness `--out` flag.
 
-Still blocked (owner): real documents (golden records), live
-`OPENAI_API_KEY` (first real call) and `ANTHROPIC_API_KEY` (SDK spike).
+Still blocked (owner): `ANTHROPIC_API_KEY` (SDK spike). `OPENAI_API_KEY` is
+live: first real
+`complete` / `complete_structured` / `embed` calls verified against
+`gpt-4o-mini` + `text-embedding-3-small` (1536-dim, matches schema); the six
+CUAD fixtures are ingested in the dev database under the eval tenant.
 
 Open: auth deferred to multi-tenancy work; DELETE has no retention window yet;
 audit_log retention/read APIs deferred until review-queue work; CI green
