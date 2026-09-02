@@ -15,6 +15,7 @@ from evals.harness import load_records
 from evals.seed_fixtures import EVAL_TENANT_ID, FIXTURES_DIR
 
 FIXTURE_SHAS_PATH = Path(__file__).resolve().parent.parent / "evals" / "fixture_shas.json"
+BASELINES_DIR = Path(__file__).resolve().parent.parent / "evals" / "baselines"
 
 
 def _fixture_shas() -> dict[str, str]:
@@ -57,6 +58,26 @@ def test_extract_records_reference_fixture_documents_and_carry_text() -> None:
         for obligation in obligations:
             assert obligation["clause_ref"].strip(), record["id"]
             assert obligation["owner"] is None or obligation["owner"].strip(), record["id"]
+
+
+@pytest.mark.parametrize("task", ["retrieve", "extract_obligations"])
+def test_committed_baseline_covers_exactly_the_golden_records(task: str) -> None:
+    """Baselines are deliberate snapshots (evals/README.md): adding or removing
+    a golden record without refreshing the baseline must fail loudly, or the
+    committed numbers silently stop describing the records they claim to."""
+    baseline_path = BASELINES_DIR / f"{task}.json"
+    assert baseline_path.exists(), f"no committed baseline for {task!r}; run the harness"
+    baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+
+    assert baseline["task"] == task
+    golden_ids = {record["id"] for record in load_records(task)}
+    assert set(baseline["per_record"]) == golden_ids, (
+        f"baseline {task}.json covers {sorted(baseline['per_record'])} but golden has "
+        f"{sorted(golden_ids)} — refresh the baseline from a harness run"
+    )
+    assert baseline["model"].strip() and baseline["generated_at"].strip(), (
+        "baseline lacks provenance (model/generated_at); use the harness --out flag"
+    )
 
 
 def test_fixture_shas_are_stable_against_committed_hashes() -> None:

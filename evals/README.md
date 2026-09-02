@@ -50,11 +50,10 @@ outgrows files, the harness — not the format — moves.
 `golden/` holds the first records (W3·D), drafted from the CUAD fixture
 documents under `fixtures/cuad/` (CC BY 4.0, see its ATTRIBUTION.md): six
 small, text-extractable contracts with diverse clause coverage, selected via
-`master_clauses.csv`. **The expected values are agent-drafted and pending
-owner review** — treat them as provisional ground truth until reviewed.
-`fixture_shas.json` pins each fixture's sha256; the
-tests in `tests/test_golden_records.py` fail fast if a fixture is re-saved
-without regenerating the records keyed by it.
+`master_clauses.csv`. The expected values were agent-drafted and have been
+reviewed and approved by the owner. `fixture_shas.json` pins each fixture's
+sha256; the tests in `tests/test_golden_records.py` fail fast if a fixture is
+re-saved without regenerating the records keyed by it.
 
 Seeding / re-seeding (needs `OPENAI_API_KEY` and the dev database, so it is a
 manual step, not part of pytest):
@@ -108,3 +107,26 @@ yet; the mechanical span check is `citation_span_valid`), and graded
 description comparison awaits a grader (free text is not exact-matchable).
 Task completion needs the human rubric. Latency/cost come from the
 structured `llm call` traces, not this harness.
+
+## Report storage: runs vs baselines
+
+The harness prints its JSON report and, with `--out`, also writes it:
+
+```sh
+uv run python -m evals.harness --task retrieve --out evals/runs/2026-09-02-retrieve.json
+```
+
+Two places, two purposes:
+
+- `evals/runs/` (gitignored) — raw run reports, local history only. Use it
+  freely; per-run wobble (see the temperature caveat above) must not churn
+  the public repo.
+- `evals/baselines/<task>.json` (committed) — the curated snapshot of the
+  accepted baseline: aggregate metrics, per-record scores, model and date.
+  Update it deliberately: re-run, compare against the committed baseline,
+  and overwrite only when the change is understood and accepted. Git then
+  shows metric drift at milestone granularity.
+
+A test in `tests/test_golden_records.py` locks each baseline's `per_record`
+ids to exactly the golden record ids of its task, so adding or removing a
+record without refreshing the baseline fails fast.

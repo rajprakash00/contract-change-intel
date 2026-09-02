@@ -1,0 +1,25 @@
+{
+  "task": "retrieve",
+  "records": 12,
+  "metrics": {
+    "recall@5": 0.8194444444444445,
+    "recall@10": 0.9583333333333334
+  },
+  "per_record": {
+    "retr-001": {"recall@5": 1.0, "recall@10": 1.0},
+    "retr-002": {"recall@5": 1.0, "recall@10": 1.0},
+    "retr-003": {"recall@5": 0.5, "recall@10": 1.0},
+    "retr-004": {"recall@5": 1.0, "recall@10": 1.0},
+    "retr-005": {"recall@5": 0.6666666666666666, "recall@10": 1.0},
+    "retr-006": {"recall@5": 0.6666666666666666, "recall@10": 1.0},
+    "retr-007": {"recall@5": 1.0, "recall@10": 1.0},
+    "retr-008": {"recall@5": 1.0, "recall@10": 1.0},
+    "retr-009": {"recall@5": 0.5, "recall@10": 0.5},
+    "retr-010": {"recall@5": 0.5, "recall@10": 1.0},
+    "retr-011": {"recall@5": 1.0, "recall@10": 1.0},
+    "retr-012": {"recall@5": 1.0, "recall@10": 1.0}
+  },
+  "model": "gpt-4o-mini",
+  "embedding_model": "text-embedding-3-small",
+  "generated_at": "2026-09-02"
+}

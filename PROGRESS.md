@@ -109,7 +109,9 @@ SDK spike (blocked on a real API key).
   registered once (LlmError → 502/503 ready for future sync surfaces)
 - `evals/` — golden records (W3·D) + harness; JSONL format + seeding workflow
   in `evals/README.md`; `seed_fixtures.py` re-seeds the fixed eval tenant from
-  `fixtures/cuad/`; `fixture_shas.json` pins fixtures to the records
+  `fixtures/cuad/`; `fixture_shas.json` pins fixtures to the records;
+  `baselines/` holds the committed per-task score snapshots, `runs/` is
+  gitignored raw-report output via the harness `--out` flag
 - `fixtures/cuad/` — 6 CUAD v1 source contracts (CC BY 4.0, ATTRIBUTION.md)
 - `docs/decisions/` — ADR-001 content-addressed storage; ADR-002 offset pagination;
   ADR-003 direct OpenAI SDK (no LLM framework); ADR-004 Postgres job rows
@@ -202,10 +204,12 @@ Implementation blocks:
   by `evals/seed_fixtures.py`; `evals/fixture_shas.json` + shape tests lock
   records to fixtures; grader owner-matching is case-insensitive.
   Baselines: recall@5 0.82 / recall@10 0.96; extraction precision 0.82 /
-  recall 1.0. Records are agent-drafted pending owner review.
+  recall 1.0. Golden records reviewed and approved by the owner; committed
+  baselines in `evals/baselines/` snapshot the accepted scores, raw reports
+  go to gitignored `evals/runs/` via the harness `--out` flag.
 
-Still blocked (owner): `ANTHROPIC_API_KEY` (SDK spike) and review of the
-agent-drafted W3·D golden records. `OPENAI_API_KEY` is live: first real
+Still blocked (owner): `ANTHROPIC_API_KEY` (SDK spike). `OPENAI_API_KEY` is
+live: first real
 `complete` / `complete_structured` / `embed` calls verified against
 `gpt-4o-mini` + `text-embedding-3-small` (1536-dim, matches schema); the six
 CUAD fixtures are ingested in the dev database under the eval tenant.
