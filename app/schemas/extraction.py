@@ -19,3 +19,10 @@ class ExtractionJobRead(BaseModel):
     error: str | None
     created_at: datetime
     updated_at: datetime
+
+
+class DocumentNotParsedDetail(BaseModel):
+    """409 detail when extraction is requested without a completed ingestion:
+    the latest ingestion job, or null when the document was never ingested."""
+
+    ingestion_job_id: uuid.UUID | None

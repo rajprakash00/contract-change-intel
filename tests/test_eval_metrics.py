@@ -6,7 +6,12 @@ and extraction accuracy matched on (clause_ref, owner).
 
 import pytest
 
-from evals.metrics import citation_span_valid, extraction_precision_recall, recall_at_k
+from evals.metrics import (
+    citation_span_valid,
+    citation_spans_valid,
+    extraction_precision_recall,
+    recall_at_k,
+)
 
 
 class TestRecallAtK:
@@ -61,6 +66,20 @@ class TestCitationSpanValid:
 
     def test_empty_span_is_invalid(self) -> None:
         assert citation_span_valid("abc", 1, 1, "") is False
+
+
+class TestCitationSpansValid:
+    def test_fraction_of_spans_sitting_inside_the_text(self) -> None:
+        text = "alpha beta"
+        spans = [(0, 5), (6, 10), (0, 100)]
+
+        assert citation_spans_valid(text, spans) == pytest.approx(2 / 3)
+
+    def test_no_citations_is_perfectly_valid_not_a_divide_by_zero(self) -> None:
+        assert citation_spans_valid("text", []) == 1.0
+
+    def test_empty_or_inverted_spans_count_as_invalid(self) -> None:
+        assert citation_spans_valid("abc", [(1, 1), (2, 1)]) == 0.0
 
 
 class TestExtractionPrecisionRecall:

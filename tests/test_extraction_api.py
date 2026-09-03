@@ -12,7 +12,7 @@ from httpx import AsyncClient
 from sqlalchemy import delete
 
 import app.db as db
-from app.models.document import Document
+from app.models.document import Document, DocumentStatus
 from app.models.extraction_job import ExtractionJob
 
 TEXT_MIME = "text/plain"
@@ -38,10 +38,22 @@ async def upload_document(client: AsyncClient, tenant_id: uuid.UUID) -> dict:
     return response.json()  # type: ignore[no-any-return]
 
 
+async def mark_parsed(document_id: str) -> None:
+    """Flip a document to `parsed` directly: extraction requires a completed
+    ingestion, and these tests exercise extraction, not the ingestion run."""
+    sessionmaker = db.get_sessionmaker()
+    async with sessionmaker() as session:
+        document = await session.get(Document, uuid.UUID(document_id))
+        assert document is not None
+        document.status = DocumentStatus.parsed
+        await session.commit()
+
+
 async def test_enqueue_returns_202_queued_job_without_running_it(client: AsyncClient) -> None:
     tenant_id = uuid.uuid4()
     headers = {"X-Tenant-Id": str(tenant_id)}
     document = await upload_document(client, tenant_id)
+    await mark_parsed(document["id"])
 
     response = await client.post(f"/documents/{document['id']}/extraction", headers=headers)
 
@@ -52,6 +64,20 @@ async def test_enqueue_returns_202_queued_job_without_running_it(client: AsyncCl
     assert body["status"] == "queued"
     assert body["result"] is None
     assert body["error"] is None
+
+
+async def test_enqueue_before_ingestion_is_409_naming_no_ingestion_job(
+    client: AsyncClient,
+) -> None:
+    # Fresh upload: never ingested, so there is no ingestion job to name.
+    tenant_id = uuid.uuid4()
+    headers = {"X-Tenant-Id": str(tenant_id)}
+    document = await upload_document(client, tenant_id)
+
+    response = await client.post(f"/documents/{document['id']}/extraction", headers=headers)
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"ingestion_job_id": None}
 
 
 async def test_enqueue_unknown_document_is_404(client: AsyncClient) -> None:
@@ -67,6 +93,7 @@ async def test_enqueue_while_active_job_exists_is_409_with_existing_job_id(
     tenant_id = uuid.uuid4()
     headers = {"X-Tenant-Id": str(tenant_id)}
     document = await upload_document(client, tenant_id)
+    await mark_parsed(document["id"])
     first = await client.post(f"/documents/{document['id']}/extraction", headers=headers)
     assert first.status_code == 202
 
@@ -88,6 +115,7 @@ async def test_get_job_returns_status_for_owning_tenant(client: AsyncClient) -> 
     tenant_id = uuid.uuid4()
     headers = {"X-Tenant-Id": str(tenant_id)}
     document = await upload_document(client, tenant_id)
+    await mark_parsed(document["id"])
     enqueued = await client.post(f"/documents/{document['id']}/extraction", headers=headers)
     job_id = enqueued.json()["id"]
 
@@ -101,6 +129,7 @@ async def test_get_job_returns_status_for_owning_tenant(client: AsyncClient) -> 
 async def test_get_job_is_tenant_scoped(client: AsyncClient) -> None:
     tenant_id = uuid.uuid4()
     document = await upload_document(client, tenant_id)
+    await mark_parsed(document["id"])
     enqueued = await client.post(
         f"/documents/{document['id']}/extraction", headers={"X-Tenant-Id": str(tenant_id)}
     )
