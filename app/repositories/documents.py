@@ -14,12 +14,14 @@ async def create(
     filename: str,
     mime_type: str,
     sha256: str,
+    amends_document_id: uuid.UUID | None = None,
 ) -> Document:
     document = Document(
         tenant_id=tenant_id,
         filename=filename,
         mime_type=mime_type,
         sha256=sha256,
+        amends_document_id=amends_document_id,
         status=DocumentStatus.uploaded,
     )
     session.add(document)
@@ -65,6 +67,13 @@ async def count_for_tenant(session: AsyncSession, *, tenant_id: uuid.UUID) -> in
         select(func.count()).select_from(Document).where(Document.tenant_id == tenant_id)
     )
     return result.scalar_one()
+
+
+async def has_amendments(session: AsyncSession, *, document_id: uuid.UUID) -> bool:
+    result = await session.execute(
+        select(Document.id).where(Document.amends_document_id == document_id).limit(1)
+    )
+    return result.scalar_one_or_none() is not None
 
 
 async def set_status(session: AsyncSession, document: Document, status: DocumentStatus) -> Document:

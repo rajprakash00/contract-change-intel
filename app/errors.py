@@ -16,6 +16,7 @@ from app.schemas.ingestion import JobConflictDetail
 from app.services.documents import (
     ALLOWED_MIME_TYPES,
     DocumentAlreadyExistsError,
+    DocumentHasAmendmentsError,
     DocumentNotFoundError,
     MimeNotAllowedError,
     UploadTooLargeError,
@@ -57,6 +58,10 @@ async def _document_already_exists(_: Request, exc: DocumentAlreadyExistsError) 
 
 async def _document_not_found(_: Request, exc: DocumentNotFoundError) -> JSONResponse:
     return _detail_response(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+async def _document_has_amendments(_: Request, exc: DocumentHasAmendmentsError) -> JSONResponse:
+    return _detail_response(status.HTTP_409_CONFLICT, str(exc))
 
 
 async def _extraction_job_not_found(_: Request, exc: ExtractionJobNotFoundError) -> JSONResponse:
@@ -106,6 +111,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.exception_handler(UploadTooLargeError)(_upload_too_large)
     app.exception_handler(DocumentAlreadyExistsError)(_document_already_exists)
     app.exception_handler(DocumentNotFoundError)(_document_not_found)
+    app.exception_handler(DocumentHasAmendmentsError)(_document_has_amendments)
     app.exception_handler(ExtractionJobNotFoundError)(_extraction_job_not_found)
     app.exception_handler(IngestionJobNotFoundError)(_ingestion_job_not_found)
     app.exception_handler(ExtractionJobConflictError)(_job_conflict)

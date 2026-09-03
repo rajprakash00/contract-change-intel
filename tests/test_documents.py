@@ -290,6 +290,111 @@ async def test_docx_upload_accepted(client: AsyncClient) -> None:
     assert response.json()["mime_type"] == DOCX_MIME
 
 
+async def test_upload_with_amends_document_id_links_amendment_to_parent(
+    client: AsyncClient,
+) -> None:
+    tenant_id = uuid.uuid4()
+    headers = {"X-Tenant-Id": str(tenant_id)}
+    parent = await client.post(
+        "/documents", files={"file": ("msa.txt", b"msa v1", TEXT_MIME)}, headers=headers
+    )
+    parent_id = parent.json()["id"]
+    assert parent.json()["amends_document_id"] is None
+
+    amendment = await client.post(
+        "/documents",
+        files={"file": ("msa-amendment-1.txt", b"msa v2", TEXT_MIME)},
+        data={"amends_document_id": parent_id},
+        headers=headers,
+    )
+    assert amendment.status_code == 201
+    assert amendment.json()["amends_document_id"] == parent_id
+
+    # Chains are allowed: an amendment may itself be amended.
+    second = await client.post(
+        "/documents",
+        files={"file": ("msa-amendment-2.txt", b"msa v3", TEXT_MIME)},
+        data={"amends_document_id": amendment.json()["id"]},
+        headers=headers,
+    )
+    assert second.status_code == 201
+    assert second.json()["amends_document_id"] == amendment.json()["id"]
+
+    fetched = await client.get(f"/documents/{amendment.json()['id']}", headers=headers)
+    assert fetched.json()["amends_document_id"] == parent_id
+
+
+async def test_amendment_rejects_unknown_parent_with_404(client: AsyncClient) -> None:
+    response = await client.post(
+        "/documents",
+        files={"file": ("a.txt", b"orphan amendment", TEXT_MIME)},
+        data={"amends_document_id": str(uuid.uuid4())},
+        headers={"X-Tenant-Id": str(uuid.uuid4())},
+    )
+    assert response.status_code == 404
+    assert await document_count() == 0
+
+
+async def test_amendment_rejects_parent_from_other_tenant_with_404(
+    client: AsyncClient,
+) -> None:
+    parent = await upload(client, b"other tenant's msa")
+    response = await client.post(
+        "/documents",
+        files={"file": ("a.txt", b"amendment bytes", TEXT_MIME)},
+        data={"amends_document_id": parent.json()["id"]},
+        headers={"X-Tenant-Id": str(uuid.uuid4())},
+    )
+    assert response.status_code == 404
+    assert await document_count() == 1
+
+
+async def test_amendment_with_duplicate_bytes_conflicts_even_when_parent_named(
+    client: AsyncClient,
+) -> None:
+    tenant_id = uuid.uuid4()
+    headers = {"X-Tenant-Id": str(tenant_id)}
+    content = b"msa v1"
+    parent = await client.post(
+        "/documents", files={"file": ("msa.txt", content, TEXT_MIME)}, headers=headers
+    )
+    response = await client.post(
+        "/documents",
+        files={"file": ("amendment.txt", content, TEXT_MIME)},
+        data={"amends_document_id": parent.json()["id"]},
+        headers=headers,
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["existing_id"] == parent.json()["id"]
+
+
+async def test_delete_document_with_amendments_conflicts_until_amendments_removed(
+    client: AsyncClient,
+) -> None:
+    tenant_id = uuid.uuid4()
+    headers = {"X-Tenant-Id": str(tenant_id)}
+    parent = await client.post(
+        "/documents", files={"file": ("msa.txt", b"msa v1", TEXT_MIME)}, headers=headers
+    )
+    amendment = await client.post(
+        "/documents",
+        files={"file": ("amd.txt", b"msa v2", TEXT_MIME)},
+        data={"amends_document_id": parent.json()["id"]},
+        headers=headers,
+    )
+
+    blocked = await client.delete(f"/documents/{parent.json()['id']}", headers=headers)
+    assert blocked.status_code == 409
+    still_there = await client.get(f"/documents/{parent.json()['id']}", headers=headers)
+    assert still_there.status_code == 200
+
+    removed = await client.delete(f"/documents/{amendment.json()['id']}", headers=headers)
+    assert removed.status_code == 204
+    freed = await client.delete(f"/documents/{parent.json()['id']}", headers=headers)
+    assert freed.status_code == 204
+    assert await document_count() == 0
+
+
 async def test_oversize_upload_rejected_with_413(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:

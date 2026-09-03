@@ -13,6 +13,7 @@ class DocumentRead(BaseModel):
     filename: str
     mime_type: str
     sha256: str
+    amends_document_id: uuid.UUID | None
     status: DocumentStatus
 
 
