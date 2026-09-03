@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 
 from app.llm.client import LlmCallError, LlmNotConfiguredError, LlmOutputError
 from app.schemas.documents import DocumentConflictDetail
+from app.schemas.extraction import DocumentNotParsedDetail
 from app.schemas.ingestion import JobConflictDetail
 from app.services.documents import (
     ALLOWED_MIME_TYPES,
@@ -19,7 +20,11 @@ from app.services.documents import (
     MimeNotAllowedError,
     UploadTooLargeError,
 )
-from app.services.extraction import ExtractionJobConflictError, ExtractionJobNotFoundError
+from app.services.extraction import (
+    DocumentNotParsedError,
+    ExtractionJobConflictError,
+    ExtractionJobNotFoundError,
+)
 from app.services.ingestion import IngestionJobConflictError, IngestionJobNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -70,6 +75,13 @@ async def _job_conflict(
     return _detail_response(status.HTTP_409_CONFLICT, detail)
 
 
+async def _document_not_parsed(_: Request, exc: DocumentNotParsedError) -> JSONResponse:
+    # Extraction before a completed ingestion is a caller-sequencing error,
+    # not a missing resource: the detail names the ingestion job to run first.
+    detail = DocumentNotParsedDetail(ingestion_job_id=exc.ingestion_job_id).model_dump(mode="json")
+    return _detail_response(status.HTTP_409_CONFLICT, detail)
+
+
 # LlmError has no raising route today (LLM calls live in the worker, not the
 # request path); the mapping exists so any future synchronous surface inherits
 # the app-wide table instead of inventing per-route handling.
@@ -98,6 +110,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.exception_handler(IngestionJobNotFoundError)(_ingestion_job_not_found)
     app.exception_handler(ExtractionJobConflictError)(_job_conflict)
     app.exception_handler(IngestionJobConflictError)(_job_conflict)
+    app.exception_handler(DocumentNotParsedError)(_document_not_parsed)
     app.exception_handler(LlmCallError)(_llm_call_error)
     app.exception_handler(LlmOutputError)(_llm_output_error)
     app.exception_handler(LlmNotConfiguredError)(_llm_not_configured)

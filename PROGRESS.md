@@ -11,13 +11,22 @@ python-docx parsers with canonical char-offset text, ADR-005 chunker),
 **W3·B ingestion pipeline end-to-end** (shared lease-at-claim helper for both
 job tables, OpenAI embeddings in the LLM client, ingestion worker handler with
 terminal document-status flips, POST/GET ingestion HTTP surface with 409
-re-run rules — now symmetric on extraction too, round-robin worker loop), and
+re-run rules — now symmetric on extraction too, round-robin worker loop),
 **W3·C hybrid search + eval harness** (`GET /search` with pgvector +
 full-text rankings fused by RRF-60 in the request path — the first
 synchronous LLM surface, via a per-request client dep; hits carry citation
 spans into parsed text; pure metric math + golden-record harness in
-`evals/`);
-ruff/mypy clean, 194 integration+unit tests green. Remaining W2 items:
+`evals/`), **W3·D golden records** (6 CUAD fixtures + 12 retrieve + 6
+extract records, committed baselines), and **W4·A extraction hardening**
+(extraction gated on a completed ingestion — `DocumentNotParsedError` → 409
+`{"ingestion_job_id": ...}`; worker reads parsed text from
+`document_texts`, not raw bytes — CUAD PDFs now extractable; expanded
+schema — `Citation` char spans, model-reported clamped `Confidence`
+(ADR-007), `DefinedTerm`s; citation gate with one retry that drops uncited
+items on the final attempt, failing only when nothing is grounded — loosened
+from "strict fail" after eval thrash on real fixtures; eval harness grades
+`citation_validity`, re-baselined: precision 0.90 / recall 1.0);
+ruff/mypy clean, 212 integration+unit tests green. Remaining W2 items:
 ~~first golden records (blocked on real documents)~~ done as W3·D, Anthropic
 SDK spike (blocked on a real API key).
 
@@ -57,11 +66,17 @@ SDK spike (blocked on a real API key).
   read-only-by-contract handlers — rules in `docs/llm-boundaries.md`),
   `embed()` (W3·B; re-sorts wire data by index so vectors align with inputs)
 - `app/llm/cost.py` — pure token→USD math; pricing table locked by unit tests
-- `app/services/extraction.py` — structured-outputs skeleton: `ObligationExtraction`
-   schema + `extract_obligations()`; job lifecycle: `enqueue_extraction` (queued
-   row only — no LLM in the request path), `get_extraction_job`,
-   `run_next_extraction_job` (worker-side claim+run; every failure becomes a
-   failed row); prompt-injection boundary in `docs/llm-boundaries.md`
+- `app/services/extraction.py` — extraction service: `Citation` (char span
+   into parsed text), `Obligation` (clause_ref, description, owner, citation,
+   clamped confidence), `DefinedTerm`, `ObligationExtraction`; job lifecycle:
+   `enqueue_extraction` (gated on `Document.status == parsed` — otherwise
+   `DocumentNotParsedError` with the latest ingestion job id; 409 while an
+   extraction job is queued/running), `get_extraction_job`,
+   `run_next_extraction_job` (worker-side claim+run; reads parsed text from
+   `document_texts`, never raw bytes; citation gate with one retry, uncited
+   items dropped on the final attempt, LlmOutputError when nothing is
+   grounded; every failure becomes a failed row); prompt-injection boundary
+   in `docs/llm-boundaries.md`
 - `app/services/parsing.py` — parsers: bytes → `ParsedDocument` (canonical
   "\n\n"-joined text, blocks with char offsets + kind, page map); DOCX via
   python-docx heading styles, PDF via pdfplumber + clause-number regex,
@@ -102,11 +117,14 @@ SDK spike (blocked on a real API key).
 - `app/api/routes/search.py` — `GET /search?q=&limit=` (limit default 10,
   cap 50); 503 unconfigured key / 502 failed query embed via the error table
 - `evals/metrics.py` — pure metric math (recall@k, mechanical citation-span
-   validity, extraction precision/recall on clause_ref+owner), unit-tested;
-   `evals/harness.py` — golden-record CLI over `golden/<task>.jsonl`
-   (`retrieve`, `extract_obligations`), JSON report with per-id scores
+    validity, extraction precision/recall on clause_ref+owner,
+    `citation_spans_valid` for structured extractions), unit-tested;
+    `evals/harness.py` — golden-record CLI over `golden/<task>.jsonl`
+    (`retrieve`, `extract_obligations`), JSON report with per-id scores;
+    extract grading now includes `citation_validity`
 - `app/errors.py` — domain exception → 404/409/415/413/502/503 mapping,
-  registered once (LlmError → 502/503 ready for future sync surfaces)
+  registered once (LlmError → 502/503 ready for future sync surfaces;
+  DocumentNotParsedError → 409 `{"ingestion_job_id": ...}`)
 - `evals/` — golden records (W3·D) + harness; JSONL format + seeding workflow
   in `evals/README.md`; `seed_fixtures.py` re-seeds the fixed eval tenant from
   `fixtures/cuad/`; `fixture_shas.json` pins fixtures to the records;
@@ -114,7 +132,8 @@ SDK spike (blocked on a real API key).
   gitignored raw-report output via the harness `--out` flag
 - `fixtures/cuad/` — 6 CUAD v1 source contracts (CC BY 4.0, ATTRIBUTION.md)
 - `docs/decisions/` — ADR-001 content-addressed storage; ADR-002 offset pagination;
-  ADR-003 direct OpenAI SDK (no LLM framework); ADR-004 Postgres job rows
+  ADR-003 direct OpenAI SDK (no LLM framework); ADR-004 Postgres job rows;
+  ADR-007 model-reported Confidence
 - `alembic.ini` + `migrations/` — async Alembic; `documents`, `audit_log`,
   `extraction_jobs`, `document_texts`, `document_chunks` (HNSW + GIN indexes),
   `ingestion_jobs`; pgvector extension; job-status enum types are dropped in
@@ -153,7 +172,7 @@ limit ≤ 100; `GET /documents/{id}` → `DocumentRead`;
 Every response carries `X-Request-ID` (echoed when sane, else generated) and
 every log line carries the same id.
 
-## Next (W3 — retrieval + evals; design settled, not yet implemented)
+## Week 3 record (retrieval + evals — complete)
 
 W3 item 1 (ingestion pipeline) was grilled to a fully settled design;
 decisions below are confirmed, docs written (ADR-005, ADR-006, ADR-004
@@ -217,3 +236,56 @@ CUAD fixtures are ingested in the dev database under the eval tenant.
 Open: auth deferred to multi-tenancy work; DELETE has no retention window yet;
 audit_log retention/read APIs deferred until review-queue work; CI green
 locally, first GitHub Actions run still unverified.
+
+## Next (W4 — change intelligence; design settled, not yet recorded in ADRs)
+
+Slice order: **W4·A extraction hardening → W4·B amendment linking + diff →
+W4·C explanation → W4·D impact mapping**. Review queue + multi-tenancy/RBAC
+stay in W5. Decisions below were settled in the W4 grill session; ADRs land
+with the blocks that need them (ADR-007 for confidence is written).
+
+- **Amendment model (W4·B)**: self-referential FK `documents.amends_document_id`
+  (nullable); no separate versions table. Trigger to revisit: multiple
+  chains/ordering semantics.
+- **Linking API (W4·B)**: optional `amends_document_id` form field on the
+  existing `POST /documents`; tenant-scoped parent validation (404 unknown
+  parent, 409 self/duplicate bytes). Any Document may parent many Amendments;
+  chains allowed; Change Reports diff exactly the two named documents, never
+  collapsed chains.
+- **Change grounding (W4·C)**: clause-level alignment — match chunks across
+  versions by clause_ref/heading with a number-normalization rule ("8.02"→"8.2";
+  guard against "8.2" vs "8.2.1" child-clause collisions), pure diff within
+  matched pairs + unmatched groups, each Change carries char spans into both
+  versions' parsed text. Unit-tested pure logic, checked against the 6 CUAD
+  fixtures.
+- **Change Report surface (W4·C)**: new `change_report_jobs` table (third
+  sibling of the ADR-004 job family). `POST /agreements/{id}/change-report`
+  naming the amendment → 202, poll `GET /change-report-jobs/{id}`.
+  Prerequisites: 409 with detail naming the first missing job (ingestion or
+  extraction on either version); caller drives everything explicitly.
+- **Explanation (W4·C)**: one structured-output call per version pair;
+  per-Change description + severity (low/medium/high). No summary paragraph.
+- **Impact mapping (W4·D)**: per Change, hybrid search over the *base
+  version's chunks only* (search repo needs a document-scoped variant;
+  `GET /search` is tenant-wide), then one structured call maps Change +
+  candidates → affected Obligations with per-Impact Confidence (ADR-007).
+- **Diff eval (W4·C)**: add a `diff` golden task (mechanical precision/recall
+  on detected Changes). Impact grading deferred to W5 — needs the mapping to
+  exist first.
+- **Re-extraction (owner decision)**: status quo stays — `enqueue_extraction`
+  blocks only queued/running; re-run after a `completed` job remains allowed.
+
+Implementation blocks:
+
+- **W4·A** — DONE: extraction gating on parsed documents (409 matrix
+  uploaded/queued-running/failed ingestion, 202 parsed); worker reads parsed
+  text (`document_texts`) so CUAD PDFs extract; schema expanded with
+  `Citation`, clamped model `Confidence` (ADR-007), `DefinedTerm`; citation
+  gate: one retry, uncited items dropped on the final attempt (loosened from
+  strict-fail after eval thrash: the model intermittently emits empty spans a
+  retry cannot fix), `LlmOutputError` only when nothing is grounded; eval
+  harness grades `citation_validity`; re-baselined extract task:
+  precision 0.90 / recall 1.0 / citation_validity 1.0.
+- **W4·B** — amendment column + linking + first diff ground work.
+- **W4·C** — change_report_jobs + Change Report surface + explanation + diff eval.
+- **W4·D** — document-scoped search + impact mapping.

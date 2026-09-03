@@ -2,17 +2,42 @@
   "task": "extract_obligations",
   "records": 6,
   "metrics": {
-    "precision": 0.8194444444444445,
-    "recall": 1.0
+    "precision": 0.9027777777777778,
+    "recall": 1.0,
+    "citation_validity": 1.0
   },
   "per_record": {
-    "extr-001": {"precision": 1.0, "recall": 1.0},
-    "extr-002": {"precision": 1.0, "recall": 1.0},
-    "extr-003": {"precision": 0.75, "recall": 1.0},
-    "extr-004": {"precision": 0.6666666666666666, "recall": 1.0},
-    "extr-005": {"precision": 1.0, "recall": 1.0},
-    "extr-006": {"precision": 0.5, "recall": 1.0}
+    "extr-001": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "citation_validity": 1.0
+    },
+    "extr-002": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "citation_validity": 1.0
+    },
+    "extr-003": {
+      "precision": 0.75,
+      "recall": 1.0,
+      "citation_validity": 1.0
+    },
+    "extr-004": {
+      "precision": 0.6666666666666666,
+      "recall": 1.0,
+      "citation_validity": 1.0
+    },
+    "extr-005": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "citation_validity": 1.0
+    },
+    "extr-006": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "citation_validity": 1.0
+    }
   },
   "model": "gpt-4o-mini",
-  "generated_at": "2026-09-02"
+  "generated_at": "2026-09-03T05:50:45+00:00"
 }

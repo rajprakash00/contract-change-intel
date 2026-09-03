@@ -97,14 +97,17 @@ Per-task record shapes:
   do not). Scored with recall@k.
 - `extract_obligations` — input `{"document_sha256", "text"}`; expected
   `{"obligations": [{"clause_ref", "owner"}]}`. Scored with precision/recall
-  matched on (clause_ref, owner); the sha ties the record to the stored source
-  bytes for citation checking once extraction emits Citations.
+  matched on (clause_ref, owner), plus mechanical `citation_validity` — the
+  fraction of emitted citation spans that sit inside the record's text
+  (`citation_spans_valid`). The service's citation gate drops uncited items on
+  its final attempt (after one retry), so completed extractions carry only
+  grounded spans and a lower score flags gate bypass or drift; a record whose
+  extraction fails entirely (nothing grounded) scores zero across the board.
 
 Metric math is pure (`evals/metrics.py`, unit-tested); the harness only wires
-records → pipeline → scores. Two metric parts await producers, not harness
-work: citation validity awaits a Citations producer (extraction emits none
-yet; the mechanical span check is `citation_span_valid`), and graded
-description comparison awaits a grader (free text is not exact-matchable).
+records → pipeline → scores. Graded description comparison still awaits a
+grader (free text is not exact-matchable), and the "surrounding clause
+supports the statement" half of citation validity stays human-graded.
 Task completion needs the human rubric. Latency/cost come from the
 structured `llm call` traces, not this harness.
 

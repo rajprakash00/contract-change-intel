@@ -9,6 +9,7 @@ failure.
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,20 +22,22 @@ from app.services import extraction, ingestion
 logger = logging.getLogger(__name__)
 
 _POLL_SECONDS = 2.0
-
-# One handler per queue; the rotation index makes the claim round-robin so a
-# backlog in one queue cannot starve the other.
-_HANDLERS = (extraction.run_next_extraction_job, ingestion.run_next_ingestion_job)
+_QUEUE_COUNT = 2
 
 
 async def run_next_job(
     session: AsyncSession, *, llm: OpenAiClient, data_dir: str, first: int
 ) -> bool:
     """One pass over the queues starting at rotation index `first`; True when a
-    job was claimed. Each queue is tried at most once per pass."""
-    for offset in range(len(_HANDLERS)):
-        handler = _HANDLERS[(first + offset) % len(_HANDLERS)]
-        if await handler(session, llm=llm, data_dir=data_dir):
+    job was claimed. Each queue is tried at most once per pass, so a backlog in
+    one queue cannot starve the other. Extraction reads parsed text from the
+    database; ingestion alone needs the storage data_dir."""
+    queues: tuple[Callable[[], Awaitable[bool]], ...] = (
+        lambda: extraction.run_next_extraction_job(session, llm=llm),
+        lambda: ingestion.run_next_ingestion_job(session, llm=llm, data_dir=data_dir),
+    )
+    for offset in range(len(queues)):
+        if await queues[(first + offset) % len(queues)]():
             return True
     return False
 
@@ -54,7 +57,7 @@ async def main() -> None:
         while True:
             async with db.get_sessionmaker()() as session:
                 ran = await run_next_job(session, llm=llm, data_dir=settings.data_dir, first=turn)
-            turn = (turn + 1) % len(_HANDLERS)
+            turn = (turn + 1) % _QUEUE_COUNT
             # Rotate every pass; idle briefly only when no queue had work.
             if not ran:
                 await asyncio.sleep(_POLL_SECONDS)

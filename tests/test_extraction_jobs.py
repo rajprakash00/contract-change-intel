@@ -17,12 +17,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.db as db
 from app.config import get_settings
 from app.llm.client import LlmCallError
-from app.models.document import Document
+from app.models.document import Document, DocumentStatus
+from app.models.document_text import DocumentText
 from app.models.extraction_job import ExtractionJob, ExtractionJobStatus
+from app.models.ingestion_job import IngestionJob, IngestionJobStatus
+from app.repositories import document_texts as texts_repo
 from app.repositories import documents as documents_repo
 from app.repositories import extraction_jobs as jobs_repo
+from app.repositories import ingestion_jobs as ingestion_jobs_repo
 from app.services.documents import DocumentNotFoundError
 from app.services.extraction import (
+    DocumentNotParsedError,
     ExtractionJobConflictError,
     ExtractionJobNotFoundError,
     enqueue_extraction,
@@ -30,19 +35,55 @@ from app.services.extraction import (
     run_next_extraction_job,
 )
 from app.storage import local
-from tests.fake_openai import fake_llm_client
+from tests.fake_openai import fake_llm_client, fake_llm_client_queue
 
-VALID_OUTPUT = json.dumps(
-    {
+PARSED_TEXT = "PARSED 8.2 Supplier shall deliver monthly status reports."
+
+
+def extraction_output(char_start: int, char_end: int, confidence: float = 0.9) -> str:
+    return json.dumps(
+        {
+            "obligations": [
+                {
+                    "clause_ref": "8.2",
+                    "description": "Supplier shall deliver monthly status reports",
+                    "owner": "Supplier",
+                    "citation": {"char_start": char_start, "char_end": char_end},
+                    "confidence": confidence,
+                }
+            ],
+            "defined_terms": [
+                {
+                    "term": "Reports",
+                    "definition": "the monthly status reports",
+                    "citation": {"char_start": char_start, "char_end": char_end},
+                    "confidence": 0.7,
+                }
+            ],
+        }
+    )
+
+
+def expected_result(char_start: int, char_end: int) -> dict:
+    return {
         "obligations": [
             {
                 "clause_ref": "8.2",
                 "description": "Supplier shall deliver monthly status reports",
                 "owner": "Supplier",
+                "citation": {"char_start": char_start, "char_end": char_end},
+                "confidence": 0.9,
             }
-        ]
+        ],
+        "defined_terms": [
+            {
+                "term": "Reports",
+                "definition": "the monthly status reports",
+                "citation": {"char_start": char_start, "char_end": char_end},
+                "confidence": 0.7,
+            }
+        ],
     }
-)
 
 
 @asynccontextmanager
@@ -72,19 +113,49 @@ async def clean_tables() -> AsyncIterator[None]:
     yield
     async with session() as s:
         await s.execute(delete(ExtractionJob))
+        await s.execute(delete(IngestionJob))
+        await s.execute(delete(DocumentText))
         await s.execute(delete(Document))
         await s.commit()
 
 
-async def make_document(tenant_id: uuid.UUID, *, mime_type: str = "text/plain") -> Document:
+async def make_document(
+    tenant_id: uuid.UUID,
+    *,
+    mime_type: str = "text/plain",
+    status: DocumentStatus = DocumentStatus.parsed,
+) -> Document:
     async with session() as s:
-        return await documents_repo.create(
+        document = await documents_repo.create(
             s,
             tenant_id=tenant_id,
             filename="msa.txt",
             mime_type=mime_type,
             sha256=uuid.uuid4().hex * 2,
         )
+        if status is not DocumentStatus.uploaded:
+            await documents_repo.set_status(s, document, status)
+        return document
+
+
+async def make_ingestion_job(document: Document, status: IngestionJobStatus) -> IngestionJob:
+    async with session() as s:
+        job = await ingestion_jobs_repo.create(
+            s, tenant_id=document.tenant_id, document_id=document.id
+        )
+        stored = await s.get(IngestionJob, job.id)
+        assert stored is not None
+        stored.status = status
+        await s.commit()
+        return stored
+
+
+async def seed_parsed_text(tenant_id: uuid.UUID, document_id: uuid.UUID, text: str) -> None:
+    async with session() as s:
+        await texts_repo.replace(
+            s, tenant_id=tenant_id, document_id=document_id, text=text, page_map=[]
+        )
+        await s.commit()
 
 
 class TestEnqueueExtraction:
@@ -134,6 +205,53 @@ class TestEnqueueExtraction:
         assert second.status is ExtractionJobStatus.queued
 
 
+class TestEnqueueGatingOnIngestion:
+    """Extraction requires a parsed document: uploaded/failed documents are
+    rejected with 409 naming the ingestion job that is not completed."""
+
+    async def test_never_ingested_document_is_rejected_without_an_ingestion_job(self) -> None:
+        tenant_id = uuid.uuid4()
+        document = await make_document(tenant_id, status=DocumentStatus.uploaded)
+
+        with pytest.raises(DocumentNotParsedError) as excinfo:
+            async with session() as s:
+                await enqueue_extraction(s, tenant_id=tenant_id, document_id=document.id)
+
+        assert excinfo.value.ingestion_job_id is None
+
+    async def test_document_with_running_ingestion_is_rejected_naming_that_job(self) -> None:
+        tenant_id = uuid.uuid4()
+        document = await make_document(tenant_id, status=DocumentStatus.uploaded)
+        ingestion = await make_ingestion_job(document, IngestionJobStatus.running)
+
+        with pytest.raises(DocumentNotParsedError) as excinfo:
+            async with session() as s:
+                await enqueue_extraction(s, tenant_id=tenant_id, document_id=document.id)
+
+        assert excinfo.value.ingestion_job_id == ingestion.id
+
+    async def test_document_with_failed_ingestion_is_rejected_naming_that_job(self) -> None:
+        tenant_id = uuid.uuid4()
+        document = await make_document(tenant_id, status=DocumentStatus.failed)
+        ingestion = await make_ingestion_job(document, IngestionJobStatus.failed)
+
+        with pytest.raises(DocumentNotParsedError) as excinfo:
+            async with session() as s:
+                await enqueue_extraction(s, tenant_id=tenant_id, document_id=document.id)
+
+        assert excinfo.value.ingestion_job_id == ingestion.id
+
+    async def test_parsed_document_enqueues_despite_an_old_terminal_ingestion(self) -> None:
+        tenant_id = uuid.uuid4()
+        document = await make_document(tenant_id, status=DocumentStatus.parsed)
+        await make_ingestion_job(document, IngestionJobStatus.completed)
+
+        async with session() as s:
+            job = await enqueue_extraction(s, tenant_id=tenant_id, document_id=document.id)
+
+        assert job.status is ExtractionJobStatus.queued
+
+
 class TestGetExtractionJob:
     async def test_get_returns_job_scoped_to_tenant(self) -> None:
         tenant_id = uuid.uuid4()
@@ -162,27 +280,29 @@ class TestGetExtractionJob:
 
 class TestRunNextExtractionJob:
     async def test_no_queued_job_returns_false(self) -> None:
-        async with fake_llm_client(VALID_OUTPUT) as (llm, _), session() as s:
-            ran = await run_next_extraction_job(s, llm=llm, data_dir="/nonexistent")
+        async with fake_llm_client(extraction_output(0, 8)) as (llm, _), session() as s:
+            ran = await run_next_extraction_job(s, llm=llm)
 
         assert ran is False
 
-    async def test_text_document_completes_with_parsed_result(self, tmp_path: Path) -> None:
+    async def test_completes_using_parsed_text_not_raw_bytes(self, tmp_path: Path) -> None:
         tenant_id = uuid.uuid4()
-        content = b"Section 8.2: Supplier shall deliver monthly status reports."
+        raw_bytes = b"RAW BYTES THAT MUST NEVER REACH THE LLM"
         document = await make_document(tenant_id)
-        local.save_document(str(tmp_path), tenant_id, document.sha256, content)
+        local.save_document(str(tmp_path), tenant_id, document.sha256, raw_bytes)
+        await seed_parsed_text(tenant_id, document.id, PARSED_TEXT)
+        span = (PARSED_TEXT.find("Supplier"), PARSED_TEXT.find("reports."))
         async with session() as s:
             job = await enqueue_extraction(s, tenant_id=tenant_id, document_id=document.id)
 
         async with (
-            fake_llm_client(VALID_OUTPUT, prompt_tokens=50, completion_tokens=10) as (
+            fake_llm_client(extraction_output(*span), prompt_tokens=50, completion_tokens=10) as (
                 llm,
                 requests,
             ),
             session() as s,
         ):
-            ran = await run_next_extraction_job(s, llm=llm, data_dir=str(tmp_path))
+            ran = await run_next_extraction_job(s, llm=llm)
 
         assert ran is True
         async with session() as s:
@@ -190,48 +310,96 @@ class TestRunNextExtractionJob:
         assert completed is not None
         assert completed.status is ExtractionJobStatus.completed
         assert completed.error is None
-        assert completed.result == {
-            "obligations": [
-                {
-                    "clause_ref": "8.2",
-                    "description": "Supplier shall deliver monthly status reports",
-                    "owner": "Supplier",
-                }
-            ]
-        }
-        # Document text travelled to the LLM as user data, never as system text.
+        assert completed.result == expected_result(*span)
+        # The parsed text travelled to the LLM as user data; the stored raw
+        # bytes, which diverge from it, never did.
         sent = json.loads(requests[0].content)
-        assert "Section 8.2" in sent["messages"][1]["content"]
+        user_message = sent["messages"][1]["content"]
+        assert "PARSED 8.2" in user_message
+        assert "RAW BYTES" not in user_message
 
-    async def test_pdf_document_fails_without_touching_the_llm(self, tmp_path: Path) -> None:
+    async def test_document_without_parsed_text_fails_without_touching_the_llm(
+        self, tmp_path: Path
+    ) -> None:
+        # Extraction reads document_texts; an unparsed document has no row
+        # (and its raw bytes are useless to the LLM), so the job fails.
         tenant_id = uuid.uuid4()
-        document = await make_document(tenant_id, mime_type="application/pdf")
+        document = await make_document(tenant_id)
+        local.save_document(str(tmp_path), tenant_id, document.sha256, b"raw bytes only")
         async with session() as s:
             job = await enqueue_extraction(s, tenant_id=tenant_id, document_id=document.id)
 
-        async with fake_llm_client(VALID_OUTPUT) as (llm, requests), session() as s:
-            ran = await run_next_extraction_job(s, llm=llm, data_dir=str(tmp_path))
+        async with fake_llm_client(extraction_output(0, 8)) as (llm, requests), session() as s:
+            ran = await run_next_extraction_job(s, llm=llm)
 
         assert ran is True
-        assert requests == [], "no LLM call may happen for mime types the pipeline can't parse"
+        assert requests == [], "no LLM call may happen without parsed text"
         async with session() as s:
             failed = await jobs_repo.find_by_id(s, tenant_id=tenant_id, job_id=job.id)
         assert failed is not None
         assert failed.status is ExtractionJobStatus.failed
         assert failed.result is None
-        assert "text/plain" in failed.error
-        assert "pdf" in failed.error
+        assert "parsed text" in failed.error
+
+    async def test_invalid_citation_spans_fail_the_job_after_exactly_one_retry(self) -> None:
+        tenant_id = uuid.uuid4()
+        document = await make_document(tenant_id)
+        await seed_parsed_text(tenant_id, document.id, PARSED_TEXT)
+        async with session() as s:
+            job = await enqueue_extraction(s, tenant_id=tenant_id, document_id=document.id)
+
+        async with (
+            fake_llm_client_queue([extraction_output(0, 10_000), extraction_output(0, 10_000)]) as (
+                llm,
+                requests,
+            ),
+            session() as s,
+        ):
+            ran = await run_next_extraction_job(s, llm=llm)
+
+        assert ran is True
+        assert len(requests) == 2, "the gate retries once, never more"
+        async with session() as s:
+            failed = await jobs_repo.find_by_id(s, tenant_id=tenant_id, job_id=job.id)
+        assert failed is not None
+        assert failed.status is ExtractionJobStatus.failed
+        assert failed.result is None
+        assert "citation" in failed.error
+
+    async def test_valid_second_attempt_completes_after_a_rejected_first(self) -> None:
+        tenant_id = uuid.uuid4()
+        document = await make_document(tenant_id)
+        await seed_parsed_text(tenant_id, document.id, PARSED_TEXT)
+        span = (PARSED_TEXT.find("Supplier"), PARSED_TEXT.find("reports."))
+        async with session() as s:
+            job = await enqueue_extraction(s, tenant_id=tenant_id, document_id=document.id)
+
+        async with (
+            fake_llm_client_queue([extraction_output(0, 10_000), extraction_output(*span)]) as (
+                llm,
+                requests,
+            ),
+            session() as s,
+        ):
+            ran = await run_next_extraction_job(s, llm=llm)
+
+        assert ran is True
+        assert len(requests) == 2
+        async with session() as s:
+            completed = await jobs_repo.find_by_id(s, tenant_id=tenant_id, job_id=job.id)
+        assert completed is not None
+        assert completed.status is ExtractionJobStatus.completed
+        assert completed.result == expected_result(*span)
 
     async def test_llm_output_failure_marks_job_failed_not_completed(self, tmp_path: Path) -> None:
         tenant_id = uuid.uuid4()
-        content = b"agreement text"
         document = await make_document(tenant_id)
-        local.save_document(str(tmp_path), tenant_id, document.sha256, content)
+        await seed_parsed_text(tenant_id, document.id, PARSED_TEXT)
         async with session() as s:
             job = await enqueue_extraction(s, tenant_id=tenant_id, document_id=document.id)
 
         async with fake_llm_client("I cannot help with that.") as (llm, _), session() as s:
-            ran = await run_next_extraction_job(s, llm=llm, data_dir=str(tmp_path))
+            ran = await run_next_extraction_job(s, llm=llm)
 
         assert ran is True, "the handler must swallow LlmError so the worker loop keeps going"
         async with session() as s:
@@ -248,15 +416,14 @@ class TestRunNextExtractionJob:
 
         tenant_id = uuid.uuid4()
         document = await make_document(tenant_id)
-        local.save_document(str(tmp_path), tenant_id, document.sha256, b"agreement text")
+        await seed_parsed_text(tenant_id, document.id, PARSED_TEXT)
         async with session() as s:
             job = await enqueue_extraction(s, tenant_id=tenant_id, document_id=document.id)
 
         async with session() as s:
             ran = await run_next_extraction_job(
                 s,
-                llm=FailingLlm(),
-                data_dir=str(tmp_path),  # type: ignore[arg-type]
+                llm=FailingLlm(),  # type: ignore[arg-type]
             )
 
         assert ran is True

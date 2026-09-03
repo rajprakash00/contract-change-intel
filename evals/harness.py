@@ -17,9 +17,11 @@ Record shapes (see evals/README.md for the JSONL rationale):
   the sha ties the record to the stored source bytes for citation checking
   once extraction emits Citations.
 
-Citation validity needs a Citations producer (extraction emits none yet, W4);
-the mechanical span check is ready in evals.metrics.citation_span_valid.
-Graded description comparison likewise awaits a grader; the mechanical
+Citation validity is graded mechanically against the record's input text
+(evals.metrics.citation_spans_valid): the pipeline's strict gate rejects
+invalid spans after one retry, so a score below 1.0 flags gate bypass or
+drift, and a record whose extraction fails entirely scores zero across the
+board. Graded description comparison awaits a grader; the mechanical
 metrics here match on (clause_ref, owner) only.
 
 Golden records land with the first real documents (W3·D); with an empty
@@ -35,10 +37,10 @@ from typing import Any
 
 from app.config import Settings, get_settings
 from app.db import dispose_engine, get_sessionmaker, init_engine
-from app.llm.client import OpenAiClient
+from app.llm.client import LlmOutputError, OpenAiClient
 from app.services.extraction import extract_obligations
 from app.services.search import search
-from evals.metrics import extraction_precision_recall, recall_at_k
+from evals.metrics import citation_spans_valid, extraction_precision_recall, recall_at_k
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
 
@@ -117,15 +119,34 @@ async def run_extraction(
 ) -> dict[str, Any]:
     per_record: dict[str, dict[str, float]] = {}
     for record in records:
+        text = record["input"]["text"]
         expected = [(o["clause_ref"], o["owner"]) for o in record["expected"]["obligations"]]
-        extraction = await extract_obligations(llm, document_text=record["input"]["text"])
+        try:
+            extraction = await extract_obligations(llm, document_text=text)
+        except LlmOutputError:
+            # The strict citation gate exhausted its retry: nothing usable
+            # came out of this record, so it scores zero across the board.
+            per_record[record["id"]] = {
+                "precision": 0.0,
+                "recall": 0.0,
+                "citation_validity": 0.0,
+            }
+            continue
         actual = [(o.clause_ref, o.owner) for o in extraction.obligations]
         precision, recall = extraction_precision_recall(expected, actual)
-        per_record[record["id"]] = {"precision": precision, "recall": recall}
+        spans = [
+            (item.citation.char_start, item.citation.char_end)
+            for item in (*extraction.obligations, *extraction.defined_terms)
+        ]
+        per_record[record["id"]] = {
+            "precision": precision,
+            "recall": recall,
+            "citation_validity": citation_spans_valid(text, spans),
+        }
     return {
         "task": "extract_obligations",
         "records": len(per_record),
-        "metrics": _aggregate(per_record, ["precision", "recall"]),
+        "metrics": _aggregate(per_record, ["precision", "recall", "citation_validity"]),
         "per_record": per_record,
     }
 

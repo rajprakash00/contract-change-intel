@@ -13,11 +13,12 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.db as db
+import app.repositories.document_texts as texts_repo
 import app.repositories.documents as documents_repo
 import app.repositories.extraction_jobs as extraction_jobs_repo
 import app.repositories.ingestion_jobs as ingestion_jobs_repo
 from app.config import get_settings
-from app.models.document import Document
+from app.models.document import Document, DocumentStatus
 from app.models.document_chunk import EMBEDDING_DIMENSIONS, DocumentChunk
 from app.models.document_text import DocumentText
 from app.models.extraction_job import ExtractionJob, ExtractionJobStatus
@@ -35,8 +36,11 @@ VALID_OUTPUT = json.dumps(
                 "clause_ref": "8.2",
                 "description": "Supplier shall deliver monthly status reports",
                 "owner": "Supplier",
+                "citation": {"char_start": 0, "char_end": 9},
+                "confidence": 0.9,
             }
-        ]
+        ],
+        "defined_terms": [],
     }
 )
 
@@ -84,6 +88,14 @@ async def make_text_document(data_dir: Path) -> Document:
             mime_type="text/plain",
             sha256=uuid.uuid4().hex * 2,
         )
+        await texts_repo.replace(
+            s,
+            tenant_id=tenant_id,
+            document_id=document.id,
+            text="agreement text",
+            page_map=[],
+        )
+        await documents_repo.set_status(s, document, DocumentStatus.parsed)
     local.save_document(str(data_dir), tenant_id, document.sha256, b"agreement text")
     return document
 

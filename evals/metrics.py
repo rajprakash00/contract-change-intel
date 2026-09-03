@@ -31,6 +31,21 @@ def citation_span_valid(text: str, char_start: int, char_end: int, cited: str) -
     return text[char_start:char_end] == cited
 
 
+def citation_spans_valid(text: str, spans: Sequence[tuple[int, int]]) -> float:
+    """Mechanical citation validity for a structured extraction: the fraction
+    of emitted spans that sit inside the text (0 <= start < end <= len).
+
+    The extraction service drops uncited items on its final gate attempt, so
+    completed extractions only carry grounded spans and a score below 1.0
+    means a gate bypass or harness/pipeline drift — the regression this
+    tripwire exists for.
+    """
+    if not spans:
+        return 1.0
+    valid = sum(1 for char_start, char_end in spans if 0 <= char_start < char_end <= len(text))
+    return valid / len(spans)
+
+
 def extraction_precision_recall(
     expected: Sequence[tuple[str, str | None]],
     actual: Sequence[tuple[str, str | None]],

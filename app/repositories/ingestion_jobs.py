@@ -42,6 +42,23 @@ async def find_active_for_document(
     return result.scalar_one_or_none()
 
 
+async def find_latest_for_document(
+    session: AsyncSession, *, document_id: uuid.UUID
+) -> IngestionJob | None:
+    """The most recent job for a document, any status.
+
+    Names the prerequisite that is not completed when a downstream surface
+    (extraction) rejects an unparsed document with 409.
+    """
+    result = await session.execute(
+        select(IngestionJob)
+        .where(IngestionJob.document_id == document_id)
+        .order_by(IngestionJob.created_at.desc(), IngestionJob.id.asc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def claim_next_queued(session: AsyncSession) -> IngestionJob | None:
     """Atomically claim the oldest runnable job (lease-at-claim, ADR-004 amendment)."""
     return await job_claims.claim_next(

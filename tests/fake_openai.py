@@ -87,6 +87,39 @@ async def fake_llm_client(
         await wire.aclose()
 
 
+@asynccontextmanager
+async def fake_llm_client_queue(
+    contents: list[str],
+    *,
+    prompt_tokens: int = 1,
+    completion_tokens: int = 1,
+) -> AsyncIterator[tuple[OpenAiClient, list[httpx2.Request]]]:
+    """One client whose wire answers each chat completion with the next content
+    in `contents`, repeating the last once exhausted — for retry-sequence tests
+    that assert on the exact number of wire calls."""
+    requests: list[httpx2.Request] = []
+    state = {"index": 0}
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        content = contents[min(state["index"], len(contents) - 1)]
+        state["index"] += 1
+        body = completion_body(
+            content,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+        return httpx2.Response(200, content=json.dumps(body).encode())
+
+    wire = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    client = OpenAiClient(make_settings(), http_client=wire)
+    try:
+        yield client, requests
+    finally:
+        # OpenAiClient.aclose() skips caller-owned wires; close ours here.
+        await wire.aclose()
+
+
 def tool_call_body(
     name: str,
     arguments: dict[str, Any],
