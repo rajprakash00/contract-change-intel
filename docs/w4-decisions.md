@@ -8,6 +8,9 @@ impact mapping**. Review queue + multi-tenancy/RBAC stay in W5.
 
 Self-referential nullable FK `documents.amends_document_id`; no separate
 versions table. Revisit trigger: multiple chains / ordering semantics.
+The FK is `ON DELETE RESTRICT`: a document with surviving amendments
+cannot be deleted (DELETE returns 409 until the chain is removed leaf
+first) — an audited system does not silently cascade or unlink.
 
 ## Linking API (W4·B)
 

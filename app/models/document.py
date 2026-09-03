@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, String, UniqueConstraint, func
+from sqlalchemy import DateTime, Enum, ForeignKey, String, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -26,6 +26,11 @@ class Document(Base):
     filename: Mapped[str] = mapped_column(String(1024))
     mime_type: Mapped[str] = mapped_column(String(255))
     sha256: Mapped[str] = mapped_column(String(64))
+    # W4·B amendment model: the document this one amends, if any. RESTRICT
+    # keeps deletes explicit — a parent with surviving amendments cannot go.
+    amends_document_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="RESTRICT"), index=True
+    )
     status: Mapped[DocumentStatus] = mapped_column(
         Enum(DocumentStatus, name="document_status", native_enum=True),
         default=DocumentStatus.uploaded,

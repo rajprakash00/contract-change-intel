@@ -65,6 +65,12 @@ class DocumentNotFoundError(Exception):
         super().__init__(f"document {document_id} not found")
 
 
+class DocumentHasAmendmentsError(Exception):
+    def __init__(self, document_id: uuid.UUID) -> None:
+        self.document_id = document_id
+        super().__init__(f"document {document_id} has amendments; delete them first")
+
+
 async def _read_upload(
     read: Callable[[int], Awaitable[bytes]], max_bytes: int
 ) -> tuple[str, bytes]:
@@ -122,10 +128,12 @@ async def upload_document(
     read: Callable[[int], Awaitable[bytes]],
     data_dir: str,
     max_bytes: int,
+    amends_document_id: uuid.UUID | None = None,
 ) -> Document:
     """Validate, dedupe-check, sniff, store to disk, then persist.
 
-    Raises MimeNotAllowedError, UploadTooLargeError, DocumentAlreadyExistsError.
+    Raises MimeNotAllowedError, UploadTooLargeError, DocumentAlreadyExistsError,
+    DocumentNotFoundError (unknown or cross-tenant amends_document_id).
     """
     if content_type not in ALLOWED_MIME_TYPES:
         raise MimeNotAllowedError(content_type)
@@ -136,6 +144,19 @@ async def upload_document(
     sniffed = sniff_mime(content)
     if sniffed != content_type:
         raise MimeNotAllowedError(content_type, sniffed=sniffed)
+
+    # Parent check runs before the dedupe so a bad reference surfaces as 404
+    # even when the bytes would also have conflicted. A parent is only
+    # linkable from its own tenant; unknown and foreign parents read alike.
+    # Self-reference (409 per the spec) is unreachable by construction: ids
+    # are server-generated, so a caller can never name the document it is
+    # creating — the DB self-FK would reject it as missing anyway.
+    if amends_document_id is not None:
+        parent = await documents_repo.find_by_id(
+            session, tenant_id=tenant_id, document_id=amends_document_id
+        )
+        if parent is None:
+            raise DocumentNotFoundError(amends_document_id)
 
     existing = await documents_repo.find_by_sha256(session, tenant_id=tenant_id, sha256=sha256)
     if existing is not None:
@@ -151,6 +172,7 @@ async def upload_document(
             filename=filename or "untitled",
             mime_type=content_type or "application/octet-stream",
             sha256=sha256,
+            amends_document_id=amends_document_id,
         )
     except IntegrityError:
         # Concurrent upload by tenant
@@ -172,6 +194,14 @@ async def upload_document(
         document.sha256,
         len(content),
     )
+    detail: dict[str, object] = {
+        "filename": document.filename,
+        "sha256": document.sha256,
+        "mime_type": document.mime_type,
+        "size_bytes": len(content),
+    }
+    if amends_document_id is not None:
+        detail["amends_document_id"] = str(amends_document_id)
     await audit_repo.record(
         session,
         tenant_id=document.tenant_id,
@@ -179,12 +209,7 @@ async def upload_document(
         action="document.upload",
         resource_type="document",
         resource_id=document.id,
-        detail={
-            "filename": document.filename,
-            "sha256": document.sha256,
-            "mime_type": document.mime_type,
-            "size_bytes": len(content),
-        },
+        detail=detail,
     )
     return document
 
@@ -237,9 +262,14 @@ async def delete_document(
     """Delete the row, then remove the stored file.
 
     Row first: a crash between the two steps leaves at worst an orphan file,
-    never a row pointing at missing bytes. Raises DocumentNotFoundError.
+    never a row pointing at missing bytes. Raises DocumentNotFoundError,
+    DocumentHasAmendmentsError.
     """
     document = await get_document(session, tenant_id=tenant_id, document_id=document_id)
+    # The FK is RESTRICT; naming the conflict here keeps the 500 off the wire
+    # and the chain deletion explicit (leaf first).
+    if await documents_repo.has_amendments(session, document_id=document_id):
+        raise DocumentHasAmendmentsError(document_id)
     await documents_repo.delete(session, document)
 
     removed = await asyncio.to_thread(

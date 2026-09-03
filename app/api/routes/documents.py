@@ -7,7 +7,7 @@ in services; domain exceptions become HTTP responses via app.errors handlers.
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Query, UploadFile, status
+from fastapi import APIRouter, Form, Query, UploadFile, status
 from fastapi.responses import FileResponse
 
 import app.services.documents as documents_service
@@ -26,6 +26,7 @@ _NOT_FOUND_RESPONSE: dict[int | str, dict[str, Any]] = {
     status_code=status.HTTP_201_CREATED,
     response_model=DocumentRead,
     responses={
+        404: {"description": "amends_document_id names no document in this tenant"},
         409: {
             "model": DocumentConflictDetail,
             "description": "duplicate content in tenant",
@@ -39,6 +40,7 @@ async def post_documents(
     settings: SettingsDep,
     file: UploadFile,
     tenant_id: TenantId,
+    amends_document_id: Annotated[uuid.UUID | None, Form()] = None,
 ) -> DocumentRead:
     document = await documents_service.upload_document(
         session,
@@ -48,6 +50,7 @@ async def post_documents(
         read=file.read,
         data_dir=settings.data_dir,
         max_bytes=settings.max_upload_mb * 1024 * 1024,
+        amends_document_id=amends_document_id,
     )
     return DocumentRead.model_validate(document)
 
@@ -108,7 +111,10 @@ async def get_document_content(
 @router.delete(
     "/documents/{document_id}",
     status_code=status.HTTP_204_NO_CONTENT,
-    responses=_NOT_FOUND_RESPONSE,
+    responses={
+        404: {"description": "no such document for this tenant"},
+        409: {"description": "document still has amendments"},
+    },
 )
 async def delete_document(
     session: SessionDep,
