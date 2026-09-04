@@ -22,6 +22,7 @@ from app.config import get_settings
 from app.llm.client import LlmOutputError
 from app.models.change_report_job import ChangeReportJob, ChangeReportJobStatus
 from app.models.document import Document, DocumentStatus
+from app.models.document_chunk import EMBEDDING_DIMENSIONS, DocumentChunk
 from app.models.document_text import DocumentText
 from app.models.extraction_job import ExtractionJob, ExtractionJobStatus
 from app.services.change_report import (
@@ -34,7 +35,7 @@ from app.services.change_report import (
     run_next_change_report_job,
 )
 from app.services.documents import DocumentNotFoundError
-from tests.fake_openai import fake_llm_client
+from tests.fake_openai import fake_llm_client, fake_llm_with_embeddings_client
 
 BASE_TEXT = "2.1 Delivery\n\nLICENSOR shall deliver within 14 days."
 AMENDED_TEXT = "2.1 Delivery\n\nLICENSOR shall deliver within 30 days."
@@ -42,6 +43,11 @@ AMENDED_TEXT = "2.1 Delivery\n\nLICENSOR shall deliver within 30 days."
 EXPLANATION_OUTPUT = json.dumps(
     {"changes": [{"index": 0, "description": "The delivery window doubles.", "severity": "high"}]}
 )
+IMPACT_OUTPUT = json.dumps({"impacts": [{"index": 0, "confidence": 0.8}]})
+
+# Orthogonal to the fake query embedding: the vector half always ranks this
+# chunk first, while the full-text half must match on "deliver" stems.
+CHUNK_EMBEDDING = [1.0] + [0.0] * (EMBEDDING_DIMENSIONS - 1)
 
 
 @pytest.fixture(autouse=True)
@@ -58,6 +64,7 @@ async def clean_tables() -> AsyncIterator[None]:
     async with sessionmaker() as session:
         await session.execute(delete(ChangeReportJob))
         await session.execute(delete(ExtractionJob))
+        await session.execute(delete(DocumentChunk))
         await session.execute(delete(DocumentText))
         await session.execute(delete(Document))
         await session.commit()
@@ -103,9 +110,55 @@ async def complete_extraction(document: Document) -> None:
                 tenant_id=document.tenant_id,
                 document_id=document.id,
                 status=ExtractionJobStatus.completed,
-                result={},
+                result={"obligations": [], "defined_terms": []},
             )
         )
+        await session.commit()
+
+
+async def complete_extraction_with_delivery_obligation(
+    document: Document, *, with_chunk: bool = True
+) -> None:
+    """A completed base extraction holding one obligation — plus, by default,
+    a chunk row covering the clause (the grounding the impact-mapping recall
+    needs)."""
+    cite_start = BASE_TEXT.index("LICENSOR shall deliver")
+    sessionmaker = db.get_sessionmaker()
+    async with sessionmaker() as session:
+        session.add(
+            ExtractionJob(
+                tenant_id=document.tenant_id,
+                document_id=document.id,
+                status=ExtractionJobStatus.completed,
+                result={
+                    "obligations": [
+                        {
+                            "clause_ref": "2.1",
+                            "description": "Licensor shall deliver within 14 days.",
+                            "owner": "Licensor",
+                            "citation": {
+                                "char_start": cite_start,
+                                "char_end": len(BASE_TEXT),
+                            },
+                            "confidence": 0.9,
+                        }
+                    ],
+                    "defined_terms": [],
+                },
+            )
+        )
+        if with_chunk:
+            session.add(
+                DocumentChunk(
+                    tenant_id=document.tenant_id,
+                    document_id=document.id,
+                    ordinal=0,
+                    text=BASE_TEXT,
+                    char_start=0,
+                    char_end=len(BASE_TEXT),
+                    embedding=CHUNK_EMBEDDING,
+                )
+            )
         await session.commit()
 
 
@@ -114,6 +167,17 @@ async def ready_pair() -> tuple[Document, Document]:
     base = await make_document(tenant_id=tenant_id, text=BASE_TEXT, parsed=True)
     amended = await make_document(tenant_id=tenant_id, text=AMENDED_TEXT, parsed=True, amends=base)
     await complete_extraction(base)
+    await complete_extraction(amended)
+    return base, amended
+
+
+async def ready_pair_with_base_obligation() -> tuple[Document, Document]:
+    tenant_id = uuid.uuid4()
+    base = await make_document(tenant_id=tenant_id, text=BASE_TEXT, parsed=True)
+    amended = await make_document(tenant_id=tenant_id, text=AMENDED_TEXT, parsed=True, amends=base)
+    # The base's latest extraction carries the obligation: the worker maps
+    # impacts off the most recent extraction job's result.
+    await complete_extraction_with_delivery_obligation(base)
     await complete_extraction(amended)
     return base, amended
 
@@ -329,6 +393,134 @@ class TestRunNextChangeReportJob:
         assert change["amended_span"] is not None
         assert change["description"] == "The delivery window doubles."
         assert change["severity"] == "high"
+        assert change["impacts"] == [], "no base obligations extracted, so no impacts"
+
+    async def test_completed_report_attaches_per_change_impacts_with_confidence(self) -> None:
+        base, amended = await ready_pair_with_base_obligation()
+        async with db.get_sessionmaker()() as session:
+            job = await enqueue_change_report(
+                session,
+                tenant_id=base.tenant_id,
+                base_document_id=base.id,
+                amended_document_id=amended.id,
+            )
+
+        async with (
+            fake_llm_with_embeddings_client(
+                [EXPLANATION_OUTPUT, IMPACT_OUTPUT], [CHUNK_EMBEDDING]
+            ) as (llm, requests),
+            db.get_sessionmaker()() as session,
+        ):
+            ran = await run_next_change_report_job(session, llm=llm)
+
+        assert ran is True
+        chat_calls = [r for r in requests if r.url.path.endswith("/chat/completions")]
+        assert len(chat_calls) == 2, "one explanation call + one impact-mapping call"
+        # The mapping prompt carries the candidate obligations for the model
+        # to point at — grounding, not free-form generation.
+        mapping_request_body = chat_calls[1].content.decode()
+        assert "Licensor shall deliver within 14 days." in mapping_request_body
+        async with db.get_sessionmaker()() as session:
+            done = await get_change_report_job(session, tenant_id=base.tenant_id, job_id=job.id)
+        assert done.status is ChangeReportJobStatus.completed
+        change = done.result["changes"][0]
+        assert change["impacts"] == [
+            {
+                "clause_ref": "2.1",
+                "description": "Licensor shall deliver within 14 days.",
+                "owner": "Licensor",
+                "confidence": 0.8,
+            }
+        ]
+
+    async def test_impacts_are_empty_when_the_base_extraction_extracted_nothing(self) -> None:
+        base, amended = await ready_pair()
+        async with db.get_sessionmaker()() as session:
+            job = await enqueue_change_report(
+                session,
+                tenant_id=base.tenant_id,
+                base_document_id=base.id,
+                amended_document_id=amended.id,
+            )
+
+        async with (
+            fake_llm_with_embeddings_client([EXPLANATION_OUTPUT], [CHUNK_EMBEDDING]) as (
+                llm,
+                requests,
+            ),
+            db.get_sessionmaker()() as session,
+        ):
+            ran = await run_next_change_report_job(session, llm=llm)
+
+        assert ran is True
+        assert len(requests) == 1, "no obligations to map: no search, no mapping call"
+        async with db.get_sessionmaker()() as session:
+            done = await get_change_report_job(session, tenant_id=base.tenant_id, job_id=job.id)
+        assert done.status is ChangeReportJobStatus.completed
+        assert done.result["changes"][0]["impacts"] == []
+
+    async def test_impacts_are_empty_when_no_chunk_recalls_a_candidate(self) -> None:
+        # The obligation exists but nothing was ever chunked: the scoped
+        # search recalls no chunks, so the mapping call has no candidates.
+        tenant_id = uuid.uuid4()
+        base = await make_document(tenant_id=tenant_id, text=BASE_TEXT, parsed=True)
+        amended = await make_document(
+            tenant_id=tenant_id, text=AMENDED_TEXT, parsed=True, amends=base
+        )
+        await complete_extraction_with_delivery_obligation(base, with_chunk=False)
+        await complete_extraction(amended)
+        async with db.get_sessionmaker()() as session:
+            job = await enqueue_change_report(
+                session,
+                tenant_id=base.tenant_id,
+                base_document_id=base.id,
+                amended_document_id=amended.id,
+            )
+
+        async with (
+            fake_llm_with_embeddings_client([EXPLANATION_OUTPUT], [CHUNK_EMBEDDING]) as (
+                llm,
+                requests,
+            ),
+            db.get_sessionmaker()() as session,
+        ):
+            ran = await run_next_change_report_job(session, llm=llm)
+
+        assert ran is True
+        # The scoped search still embeds its query, but with no candidates
+        # there is no mapping call — only the explanation.
+        chat_calls = [r for r in requests if r.url.path.endswith("/chat/completions")]
+        assert len(chat_calls) == 1, "no candidates: no mapping call"
+        async with db.get_sessionmaker()() as session:
+            done = await get_change_report_job(session, tenant_id=base.tenant_id, job_id=job.id)
+        assert done.status is ChangeReportJobStatus.completed
+        assert done.result["changes"][0]["impacts"] == []
+
+    async def test_impact_index_outside_the_candidates_fails_the_job(self) -> None:
+        base, amended = await ready_pair_with_base_obligation()
+        async with db.get_sessionmaker()() as session:
+            job = await enqueue_change_report(
+                session,
+                tenant_id=base.tenant_id,
+                base_document_id=base.id,
+                amended_document_id=amended.id,
+            )
+
+        out_of_range = json.dumps({"impacts": [{"index": 7, "confidence": 0.5}]})
+        async with (
+            fake_llm_with_embeddings_client(
+                [EXPLANATION_OUTPUT, out_of_range], [CHUNK_EMBEDDING]
+            ) as (llm, _),
+            db.get_sessionmaker()() as session,
+        ):
+            ran = await run_next_change_report_job(session, llm=llm)
+
+        assert ran is True
+        async with db.get_sessionmaker()() as session:
+            failed = await get_change_report_job(session, tenant_id=base.tenant_id, job_id=job.id)
+        assert failed.status is ChangeReportJobStatus.failed
+        assert failed.result is None
+        assert "impact-index" in failed.error
 
     async def test_no_detected_changes_completes_without_an_llm_call(self) -> None:
         tenant_id = uuid.uuid4()

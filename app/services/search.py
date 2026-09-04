@@ -79,13 +79,51 @@ async def search(
     LlmNotConfiguredError from the query embedding; the app-wide error table
     maps those to 502/503.
     """
+    return await _hybrid_hits(
+        session, llm=llm, tenant_id=tenant_id, document_id=None, query=query, limit=limit
+    )
+
+
+async def search_document(
+    session: AsyncSession,
+    *,
+    llm: OpenAiClient,
+    tenant_id: uuid.UUID,
+    document_id: uuid.UUID,
+    query: str,
+    limit: int,
+) -> list[SearchHit]:
+    """Hybrid search restricted to one document's chunks (W4·D): the variant
+    impact mapping needs — a Change recalls obligations from the base
+    version only, while `GET /search` stays tenant-wide.
+
+    Same fusion and error behavior as `search`.
+    """
+    return await _hybrid_hits(
+        session, llm=llm, tenant_id=tenant_id, document_id=document_id, query=query, limit=limit
+    )
+
+
+async def _hybrid_hits(
+    session: AsyncSession,
+    *,
+    llm: OpenAiClient,
+    tenant_id: uuid.UUID,
+    document_id: uuid.UUID | None,
+    query: str,
+    limit: int,
+) -> list[SearchHit]:
     (query_embedding,) = await llm.embed([query])
     depth = limit * _CANDIDATE_DEPTH_FACTOR
     vector_ranked = await chunks_repo.rank_by_similarity(
-        session, tenant_id=tenant_id, embedding=query_embedding, limit=depth
+        session,
+        tenant_id=tenant_id,
+        embedding=query_embedding,
+        limit=depth,
+        document_id=document_id,
     )
     fts_ranked = await chunks_repo.rank_by_full_text(
-        session, tenant_id=tenant_id, query=query, limit=depth
+        session, tenant_id=tenant_id, query=query, limit=depth, document_id=document_id
     )
     by_id = {chunk.id: (chunk, document) for chunk, document in [*vector_ranked, *fts_ranked]}
     fused = rrf_fuse(

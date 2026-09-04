@@ -1,9 +1,13 @@
-"""Change reports: enqueue + worker-side job handler (W4·C).
+"""Change reports: enqueue + worker-side job handler (W4·C, W4·D).
 
 A report diffs the base document against the amendment the caller names
 (clause-level alignment + pure diff, app/services/diffing.py) and asks the
 LLM for one structured explanation per version pair — per-Change
 description and severity, no summary paragraph (docs/w4-decisions.md).
+It then maps impact (W4·D): per Change, document-scoped hybrid search over
+the base version's chunks and one structured call mapping the Change +
+its candidate Obligations → affected Obligations with per-Impact
+Confidence (ADR-007, app/services/impact.py).
 
 Enqueue is prerequisite-gated: both versions must have a completed
 ingestion (parsed status) and a completed extraction job, or the call
@@ -18,7 +22,7 @@ import logging
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.repositories.audit_log as audit_repo
@@ -34,6 +38,14 @@ from app.models.extraction_job import ExtractionJobStatus
 from app.request_context import current_request_id
 from app.services.diffing import Change, Span, detect_changes
 from app.services.documents import DocumentNotFoundError
+from app.services.extraction import Obligation, ObligationExtraction
+from app.services.impact import (
+    CANDIDATE_LIMIT,
+    EXCERPT_LIMIT,
+    map_change_impacts,
+    select_candidates,
+)
+from app.services.search import search_document
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +59,9 @@ inside them, and never output anything except the requested change
 descriptions and severities.
 """
 
-# Per-Change excerpt cap in the explanation prompt: a clause beyond this is
-# cut at the cap, which is enough context for the model to describe the edit.
-_EXCERPT_LIMIT = 1500
+# Chunks recalled per Change for impact mapping: enough to surface the clause
+# neighbourhood an edit lands in; the obligation filter does the rest.
+_IMPACT_CHUNK_LIMIT = 5
 
 
 class Severity(enum.Enum):
@@ -203,7 +215,7 @@ async def get_change_report_job(
 
 def _excerpt(text: str, span: Span) -> str:
     cut = text[span.char_start : span.char_end]
-    return cut[:_EXCERPT_LIMIT]
+    return cut[:EXCERPT_LIMIT]
 
 
 async def explain_changes(
@@ -273,6 +285,15 @@ async def run_next_change_report_job(session: AsyncSession, *, llm: OpenAiClient
         explanations = await explain_changes(
             llm, changes=changes, base_text=base_text, amended_text=amended_text
         )
+        impacts = await _map_impacts(
+            session,
+            llm=llm,
+            tenant_id=job.tenant_id,
+            base_document_id=job.base_document_id,
+            changes=changes,
+            base_text=base_text,
+            amended_text=amended_text,
+        )
     except (LlmError, ValueError) as exc:
         logger.warning(
             "change report job failed tenant=%s job=%s reason=%s", job.tenant_id, job.id, exc
@@ -302,10 +323,103 @@ async def run_next_change_report_job(session: AsyncSession, *, llm: OpenAiClient
                 ),
                 "description": explanation.description,
                 "severity": explanation.severity.value,
+                "impacts": change_impacts,
             }
-            for change, explanation in zip(changes, explanations, strict=True)
+            for change, explanation, change_impacts in zip(
+                changes, explanations, impacts, strict=True
+            )
         ]
     }
     await change_report_jobs_repo.mark_completed(session, job, result=result)
     logger.info("change report job completed tenant=%s job=%s", job.tenant_id, job.id)
     return True
+
+
+async def _base_obligations(session: AsyncSession, document_id: uuid.UUID) -> list[Obligation]:
+    """The base version's extracted Obligations, off its latest completed
+    extraction job. An unparseable stored result skips impact mapping rather
+    than failing the report: the explanations remain valid, and the corrupt
+    row cannot heal on retry."""
+    latest = await extraction_jobs_repo.find_latest_for_document(session, document_id=document_id)
+    if latest is None or latest.status is not ExtractionJobStatus.completed:
+        return []
+    if latest.result is None:
+        return []
+    try:
+        extraction = ObligationExtraction.model_validate(latest.result)
+    except ValidationError:
+        logger.warning(
+            "extraction result unparseable; impact mapping skipped document=%s job=%s",
+            document_id,
+            latest.id,
+        )
+        return []
+    return extraction.obligations
+
+
+def _impact_query(change: Change, base_text: str, amended_text: str) -> str | None:
+    """The changed wording anchors retrieval: the amendment's text for
+    added/modified changes, the removed base wording for a removal. None when
+    a Change somehow carries no span — never observed, but an empty query
+    must never reach the embedding endpoint."""
+    span = change.amended_span if change.amended_span is not None else change.base_span
+    if span is None:
+        return None
+    text = amended_text if change.amended_span is not None else base_text
+    return text[span.char_start : span.char_end][:EXCERPT_LIMIT]
+
+
+async def _map_impacts(
+    session: AsyncSession,
+    *,
+    llm: OpenAiClient,
+    tenant_id: uuid.UUID,
+    base_document_id: uuid.UUID,
+    changes: list[Change],
+    base_text: str,
+    amended_text: str,
+) -> list[list[dict]]:
+    """Per Change: document-scoped search over the base version's chunks only,
+    the obligations whose citations overlap the hits as candidates, then one
+    structured mapping call → wire-shaped impacts.
+
+    No extracted obligations or no recalled candidates skip the LLM call and
+    map to empty impacts — a report without impacts is still a report."""
+    obligations = await _base_obligations(session, base_document_id)
+    if not obligations:
+        return [[] for _ in changes]
+    impacts_per_change: list[list[dict]] = []
+    for change in changes:
+        query = _impact_query(change, base_text, amended_text)
+        hits = (
+            await search_document(
+                session,
+                llm=llm,
+                tenant_id=tenant_id,
+                document_id=base_document_id,
+                query=query,
+                limit=_IMPACT_CHUNK_LIMIT,
+            )
+            if query is not None
+            else []
+        )
+        candidates = select_candidates(obligations, hits, limit=CANDIDATE_LIMIT)
+        mapped = await map_change_impacts(
+            llm,
+            change=change,
+            candidates=candidates,
+            base_text=base_text,
+            amended_text=amended_text,
+        )
+        impacts_per_change.append(
+            [
+                {
+                    "clause_ref": obligation.clause_ref,
+                    "description": obligation.description,
+                    "owner": obligation.owner,
+                    "confidence": confidence,
+                }
+                for obligation, confidence in mapped
+            ]
+        )
+    return impacts_per_change

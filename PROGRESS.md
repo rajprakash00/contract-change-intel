@@ -7,7 +7,7 @@ the file's history lives in git, not in this file.
 
 ## State
 
-Done through **W4·C change reports**: W1 foundations / read paths /
+Done through **W4·D impact mapping**: W1 foundations / read paths /
 hardening gate · W2 LLM client + extraction job surface · W3 ingestion
 pipeline (parse → chunk → embed), RRF hybrid search, golden records + eval
 harness · W4·A parse-gated extraction (409 until ingestion completes), worker
@@ -25,14 +25,21 @@ plain-text alignment — number normalization "8.02"≡"8.2", tuple keys guard
 foreign, 409 unlinked amendment, 409 naming the first missing
 ingestion/extraction job), `GET /change-report-jobs/{id}`, one structured
 explanation call per version pair (per-Change description + severity),
-`diff` golden task (mechanical precision/recall; no LLM, no DB).
+`diff` golden task (mechanical precision/recall; no LLM, no DB) · W4·D
+document-scoped search variant (`search_document`; repo rankers take an
+optional `document_id` filter — `GET /search` stays tenant-wide), per-Change
+impact mapping in the change report worker: changed wording recalls base
+chunks, citation-overlap candidate selection (`app/services/impact.py`,
+pure + unit-tested), one structured mapping call per Change → affected
+Obligations with per-Impact Confidence (ADR-007); report rows gain
+`impacts` per Change; impact grading eval deferred to W5.
 `OPENAI_API_KEY` live and verified end to end; the 6 CUAD fixtures are
 ingested in the dev DB under the eval tenant.
 
 Baselines (`evals/baselines/`): retrieve recall@5 0.82 / recall@10 0.96;
 extract precision 0.90 / recall 1.0 / citation_validity 1.0; diff
 precision 1.0 / recall 1.0.
-ruff/mypy clean; 270 integration+unit tests green.
+ruff/mypy clean; 285 integration+unit tests green.
 
 ## Open / blocked
 
@@ -45,10 +52,8 @@ ruff/mypy clean; 270 integration+unit tests green.
 ## Next
 
 Settled design: `docs/w4-decisions.md` (ADRs land with the blocks that need
-them; ADR-007 is written).
-
-- **W4·D** — document-scoped search variant + impact mapping with per-Impact
-  Confidence.
+them; ADR-007 is written). W4 is complete; W5 (review queue,
+multi-tenancy/RBAC) is next per PLAN.
 
 ## Gotchas
 

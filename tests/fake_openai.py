@@ -268,3 +268,44 @@ async def fake_embedding_client(
     finally:
         # OpenAiClient.aclose() skips caller-owned wires; close ours here.
         await wire.aclose()
+
+
+@asynccontextmanager
+async def fake_llm_with_embeddings_client(
+    contents: list[str],
+    vectors: list[list[float]],
+    *,
+    prompt_tokens: int = 1,
+    completion_tokens: int = 1,
+) -> AsyncIterator[tuple[OpenAiClient, list[httpx2.Request]]]:
+    """One client whose wire answers chat completions with the next content in
+    `contents` (repeating the last once exhausted) and /embeddings with
+    `vectors` (likewise) — for worker paths that embed and complete in one
+    run, like the W4·D impact-mapping pass inside a change report job.
+    """
+    requests: list[httpx2.Request] = []
+    chat_state = {"index": 0}
+    embed_state = {"index": 0}
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        if request.url.path.endswith("/embeddings"):
+            vector = vectors[min(embed_state["index"], len(vectors) - 1)]
+            embed_state["index"] += 1
+            return httpx2.Response(200, content=json.dumps(embeddings_body([vector])).encode())
+        content = contents[min(chat_state["index"], len(contents) - 1)]
+        chat_state["index"] += 1
+        body = completion_body(
+            content,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+        return httpx2.Response(200, content=json.dumps(body).encode())
+
+    wire = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    client = OpenAiClient(make_settings(), http_client=wire)
+    try:
+        yield client, requests
+    finally:
+        # OpenAiClient.aclose() skips caller-owned wires; close ours here.
+        await wire.aclose()
