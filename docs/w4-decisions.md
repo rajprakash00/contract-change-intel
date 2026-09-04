@@ -27,6 +27,14 @@ child-clause collisions). Pure diff within matched pairs + unmatched groups;
 each Change carries char spans into both versions' parsed text. Unit-tested
 pure logic, checked against the 6 CUAD fixtures.
 
+Implementation notes (W4·C build): alignment sections are derived from each
+version's *parsed text paragraphs*, not its chunks — the chunker's
+fixed-window fallback for heading-less documents (ADR-005) collapses
+plain-text agreements into one chunk, which would degenerate alignment to a
+whole-document diff; paragraph structure is the common denominator of every
+parser. The prerequisite 409 names the first gap in the order base-ingestion →
+base-extraction → amendment-ingestion → amendment-extraction.
+
 ## Change Report surface (W4·C)
 
 `change_report_jobs` table (third sibling of the ADR-004 job family).

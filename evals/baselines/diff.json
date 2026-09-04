@@ -1,0 +1,20 @@
+{
+  "task": "diff",
+  "records": 2,
+  "metrics": {
+    "precision": 1.0,
+    "recall": 1.0
+  },
+  "per_record": {
+    "diff-001": {
+      "precision": 1.0,
+      "recall": 1.0
+    },
+    "diff-002": {
+      "precision": 1.0,
+      "recall": 1.0
+    }
+  },
+  "model": "gpt-4o-mini",
+  "generated_at": "2026-09-04T02:47:17+00:00"
+}

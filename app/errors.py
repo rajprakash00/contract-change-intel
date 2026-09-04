@@ -10,9 +10,15 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
 from app.llm.client import LlmCallError, LlmNotConfiguredError, LlmOutputError
+from app.schemas.change_report import ChangePrerequisiteDetail
 from app.schemas.documents import DocumentConflictDetail
 from app.schemas.extraction import DocumentNotParsedDetail
 from app.schemas.ingestion import JobConflictDetail
+from app.services.change_report import (
+    AmendmentMismatchError,
+    ChangeReportJobNotFoundError,
+    PrerequisiteMissingError,
+)
 from app.services.documents import (
     ALLOWED_MIME_TYPES,
     DocumentAlreadyExistsError,
@@ -87,6 +93,25 @@ async def _document_not_parsed(_: Request, exc: DocumentNotParsedError) -> JSONR
     return _detail_response(status.HTTP_409_CONFLICT, detail)
 
 
+async def _change_report_job_not_found(
+    _: Request, exc: ChangeReportJobNotFoundError
+) -> JSONResponse:
+    return _detail_response(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+async def _amendment_mismatch(_: Request, exc: AmendmentMismatchError) -> JSONResponse:
+    return _detail_response(status.HTTP_409_CONFLICT, str(exc))
+
+
+async def _change_prerequisite_missing(_: Request, exc: PrerequisiteMissingError) -> JSONResponse:
+    # Change reports before completed ingestion + extraction on both versions
+    # are a caller-sequencing error: the detail names the first missing job.
+    detail = ChangePrerequisiteDetail(
+        document_id=exc.document_id, kind=exc.kind, job_id=exc.job_id
+    ).model_dump(mode="json")
+    return _detail_response(status.HTTP_409_CONFLICT, detail)
+
+
 # LlmError has no raising route today (LLM calls live in the worker, not the
 # request path); the mapping exists so any future synchronous surface inherits
 # the app-wide table instead of inventing per-route handling.
@@ -117,6 +142,9 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.exception_handler(ExtractionJobConflictError)(_job_conflict)
     app.exception_handler(IngestionJobConflictError)(_job_conflict)
     app.exception_handler(DocumentNotParsedError)(_document_not_parsed)
+    app.exception_handler(ChangeReportJobNotFoundError)(_change_report_job_not_found)
+    app.exception_handler(AmendmentMismatchError)(_amendment_mismatch)
+    app.exception_handler(PrerequisiteMissingError)(_change_prerequisite_missing)
     app.exception_handler(LlmCallError)(_llm_call_error)
     app.exception_handler(LlmOutputError)(_llm_output_error)
     app.exception_handler(LlmNotConfiguredError)(_llm_not_configured)

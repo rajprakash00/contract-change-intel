@@ -16,6 +16,11 @@ Record shapes (see evals/README.md for the JSONL rationale):
   {"obligations": [{"clause_ref", "owner"}]} — matched on (clause_ref, owner);
   the sha ties the record to the stored source bytes for citation checking
   once extraction emits Citations.
+- diff: input {"document_sha256", "base_text", "amended_text"}; expected
+  {"changes": [{"kind", "clause_ref"}]} — matched on (kind, clause_ref).
+  Graded mechanically (W4·C): the texts run through the real parse + diff
+  pipeline with no LLM in the loop, so the task is cheap and deterministic.
+  Impact grading is deferred to W5 — the mapping must exist first.
 
 Citation validity is graded mechanically against the record's input text
 (evals.metrics.citation_spans_valid): the pipeline's strict gate rejects
@@ -38,9 +43,16 @@ from typing import Any
 from app.config import Settings, get_settings
 from app.db import dispose_engine, get_sessionmaker, init_engine
 from app.llm.client import LlmOutputError, OpenAiClient
+from app.services.diffing import detect_changes
 from app.services.extraction import extract_obligations
+from app.services.parsing import parse
 from app.services.search import search
-from evals.metrics import citation_spans_valid, extraction_precision_recall, recall_at_k
+from evals.metrics import (
+    citation_spans_valid,
+    diff_precision_recall,
+    extraction_precision_recall,
+    recall_at_k,
+)
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
 
@@ -151,6 +163,27 @@ async def run_extraction(
     }
 
 
+async def run_diff(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """The diff task is pure: parse both texts, align + diff, grade on
+    (kind, clause_ref). No database session, no LLM — deterministic and free."""
+    per_record: dict[str, dict[str, float]] = {}
+    for record in records:
+        base_text = parse("text/plain", record["input"]["base_text"].encode()).text
+        amended_text = parse("text/plain", record["input"]["amended_text"].encode()).text
+        actual = [(c.kind.value, c.clause_ref) for c in detect_changes(base_text, amended_text)]
+        expected = [
+            (change["kind"], change["clause_ref"]) for change in record["expected"]["changes"]
+        ]
+        precision, recall = diff_precision_recall(expected, actual)
+        per_record[record["id"]] = {"precision": precision, "recall": recall}
+    return {
+        "task": "diff",
+        "records": len(per_record),
+        "metrics": _aggregate(per_record, ["precision", "recall"]),
+        "per_record": per_record,
+    }
+
+
 def _stamp(report: dict[str, Any], settings: Settings) -> dict[str, Any]:
     """Make a stored report self-describing: what ran it and when. Reports
     land in evals/runs/ (gitignored) or evals/baselines/ (committed), where
@@ -162,7 +195,9 @@ def _stamp(report: dict[str, Any], settings: Settings) -> dict[str, Any]:
 
 async def main() -> int:
     parser = argparse.ArgumentParser(description="Run golden-record evals.")
-    parser.add_argument("--task", required=True, choices=("retrieve", "extract_obligations"))
+    parser.add_argument(
+        "--task", required=True, choices=("retrieve", "extract_obligations", "diff")
+    )
     parser.add_argument(
         "--k", type=int, action="append", default=[], help="recall@k (retrieve only)"
     )
@@ -180,18 +215,26 @@ async def main() -> int:
         return 0
 
     settings = get_settings()
-    llm = OpenAiClient(settings)  # raises LlmNotConfiguredError without a key
-    init_engine(settings.database_url)
+    # Only tasks that call the model construct a client: diff runs the pure
+    # pipeline, so it needs neither an API key nor the database.
+    llm = OpenAiClient(settings) if args.task != "diff" else None
+    if llm is not None:
+        init_engine(settings.database_url)
     try:
         if args.task == "retrieve":
+            assert llm is not None
             report = await run_retrieve(
                 records, llm, ks=args.k or list(DEFAULT_KS), settings=settings
             )
-        else:
+        elif args.task == "extract_obligations":
+            assert llm is not None
             report = await run_extraction(records, llm, settings=settings)
+        else:
+            report = await run_diff(records)
     finally:
-        await llm.aclose()
-        await dispose_engine()
+        if llm is not None:
+            await llm.aclose()
+            await dispose_engine()
     report = _stamp(report, settings)
     if args.out:
         out = Path(args.out)

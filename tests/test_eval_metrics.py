@@ -9,6 +9,7 @@ import pytest
 from evals.metrics import (
     citation_span_valid,
     citation_spans_valid,
+    diff_precision_recall,
     extraction_precision_recall,
     recall_at_k,
 )
@@ -134,3 +135,51 @@ class TestExtractionPrecisionRecall:
 
         assert precision == pytest.approx(1 / 2)
         assert recall == 1.0
+
+
+class TestDiffPrecisionRecall:
+    def test_matched_on_kind_and_clause_ref(self) -> None:
+        expected = [("modified", "2.2"), ("added", "2.9")]
+        actual = [("modified", "2.2"), ("added", "2.9")]
+
+        precision, recall = diff_precision_recall(expected, actual)
+
+        assert precision == 1.0
+        assert recall == 1.0
+
+    def test_wrong_kind_or_clause_does_not_match(self) -> None:
+        precision, recall = diff_precision_recall(
+            [("modified", "2.2")], [("added", "2.2"), ("modified", "2.3")]
+        )
+
+        assert precision == 0.0
+        assert recall == 0.0
+
+    def test_extra_and_missed_changes_lower_their_scores(self) -> None:
+        expected = [("modified", "2.2"), ("removed", "2.3")]
+        actual = [("modified", "2.2"), ("added", "2.9")]
+
+        precision, recall = diff_precision_recall(expected, actual)
+
+        assert precision == pytest.approx(1 / 2)
+        assert recall == pytest.approx(1 / 2)
+
+    def test_preamble_changes_match_on_none_clause_ref(self) -> None:
+        precision, recall = diff_precision_recall([("modified", None)], [("modified", None)])
+
+        assert precision == 1.0
+        assert recall == 1.0
+
+    def test_two_identical_documents_score_perfect_not_zero(self) -> None:
+        """A no-change golden record must reward an empty diff, not divide
+        by zero into a zero score — identical versions are a graded outcome."""
+        precision, recall = diff_precision_recall([], [])
+
+        assert precision == 1.0
+        assert recall == 1.0
+
+    def test_detected_change_without_a_golden_expectation_lowers_precision(self) -> None:
+        precision, recall = diff_precision_recall([], [("added", "2.9")])
+
+        assert precision == 0.0
+        assert recall == 0.0
