@@ -17,6 +17,10 @@ Fixed targets so golden records have something stable to be scored against:
   graded (not exact) since it is free text.
 - **Retrieval recall@k** — fraction of golden-relevant Chunks present in the
   top-k search results for a golden query; reported at k=5 and k=10.
+- **Diff detection accuracy** — precision/recall of detected Changes vs the
+  golden record, matched on (`kind`, `clause_ref`); description and severity
+  are free text and stay graded (not exact) until a grader exists. Identical
+  versions score 1.0: "no change" is a graded outcome, not a division by zero.
 - **Task completion** — end-to-end Change Report on golden
   agreement/amendment pairs, judged against a human rubric (not automated
   until the rubric is written).
@@ -33,7 +37,7 @@ Each golden record is one JSON object per line in `golden/*.jsonl`:
 ```
 
 - `id` — stable identifier; regressions are reported per id.
-- `task` — pipeline function under test (`extract_obligations`, `diff_explain`,
+- `task` — pipeline function under test (`extract_obligations`, `diff`,
   `impact_map`, `retrieve`). One file per task keeps metrics separable:
   `golden/<task>.jsonl`.
 - `input` — exactly what the function consumes; `document_sha256` ties the
@@ -87,6 +91,7 @@ attributable):
 ```sh
 uv run python -m evals.harness --task retrieve --k 5 --k 10
 uv run python -m evals.harness --task extract_obligations
+uv run python -m evals.harness --task diff
 ```
 
 Per-task record shapes:
@@ -103,6 +108,14 @@ Per-task record shapes:
   its final attempt (after one retry), so completed extractions carry only
   grounded spans and a lower score flags gate bypass or drift; a record whose
   extraction fails entirely (nothing grounded) scores zero across the board.
+- `diff` — input `{"document_sha256", "base_text", "amended_text"}`; expected
+  `{"changes": [{"kind", "clause_ref"}]}`. Scored with precision/recall
+  matched on (kind, clause_ref). Pure pipeline (parse → clause-level
+  alignment + diff, W4·C): no LLM in the loop, no database, so the task is
+  cheap, deterministic, and needs no API key. The base text is a fixture's
+  parsed text (pinned by sha256 like the other tasks); `amended_text` is a
+  synthetic amendment of it, hand-labelled with the changes the edit makes.
+  Impact grading is deferred to W5 — the mapping must exist first.
 
 Metric math is pure (`evals/metrics.py`, unit-tested); the harness only wires
 records → pipeline → scores. Graded description comparison still awaits a

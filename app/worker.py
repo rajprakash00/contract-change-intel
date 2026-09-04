@@ -1,4 +1,4 @@
-"""Worker process: round-robin claims across both job tables.
+"""Worker process: round-robin claims across the job tables.
 
 Run with `uv run python -m app.worker`. Jobs are Postgres rows; concurrent
 workers are safe via FOR UPDATE SKIP LOCKED (see
@@ -17,12 +17,12 @@ import app.db as db
 from app.config import Settings, get_settings
 from app.llm.client import OpenAiClient
 from app.logging_config import configure_logging
-from app.services import extraction, ingestion
+from app.services import change_report, extraction, ingestion
 
 logger = logging.getLogger(__name__)
 
 _POLL_SECONDS = 2.0
-_QUEUE_COUNT = 2
+_QUEUE_COUNT = 3
 
 
 async def run_next_job(
@@ -30,11 +30,12 @@ async def run_next_job(
 ) -> bool:
     """One pass over the queues starting at rotation index `first`; True when a
     job was claimed. Each queue is tried at most once per pass, so a backlog in
-    one queue cannot starve the other. Extraction reads parsed text from the
+    one queue cannot starve the others. Extraction reads parsed text from the
     database; ingestion alone needs the storage data_dir."""
     queues: tuple[Callable[[], Awaitable[bool]], ...] = (
         lambda: extraction.run_next_extraction_job(session, llm=llm),
         lambda: ingestion.run_next_ingestion_job(session, llm=llm, data_dir=data_dir),
+        lambda: change_report.run_next_change_report_job(session, llm=llm),
     )
     for offset in range(len(queues)):
         if await queues[(first + offset) % len(queues)]():

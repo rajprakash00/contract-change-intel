@@ -44,6 +44,23 @@ async def find_active_for_document(
     return result.scalar_one_or_none()
 
 
+async def find_latest_for_document(
+    session: AsyncSession, *, document_id: uuid.UUID
+) -> ExtractionJob | None:
+    """The most recent job for a document, any status.
+
+    Names the prerequisite that is not completed when a downstream surface
+    (change reports) rejects a document without a completed extraction.
+    """
+    result = await session.execute(
+        select(ExtractionJob)
+        .where(ExtractionJob.document_id == document_id)
+        .order_by(ExtractionJob.created_at.desc(), ExtractionJob.id.asc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def claim_next_queued(session: AsyncSession) -> ExtractionJob | None:
     """Atomically claim the oldest runnable job (lease-at-claim, ADR-004 amendment).
 

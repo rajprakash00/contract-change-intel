@@ -46,6 +46,16 @@ def citation_spans_valid(text: str, spans: Sequence[tuple[int, int]]) -> float:
     return valid / len(spans)
 
 
+def _matched_precision_recall(expected: set, actual: Sequence) -> tuple[float, float]:
+    """Shared set-matching core: precision over `actual`'s length (duplicates
+    stay in the denominator — double-emitting is a real failure), recall over
+    the expected set."""
+    matched = len(expected & set(actual))
+    precision = matched / len(actual) if actual else 0.0
+    recall = matched / len(expected) if expected else 0.0
+    return precision, recall
+
+
 def extraction_precision_recall(
     expected: Sequence[tuple[str, str | None]],
     actual: Sequence[tuple[str, str | None]],
@@ -63,11 +73,21 @@ def extraction_precision_recall(
         return (clause_ref, owner.casefold() if owner is not None else None)
 
     expected_set = {key(pair) for pair in expected}
-    actual_set = {key(pair) for pair in actual}
-    matched = len(expected_set & actual_set)
-    # Precision's denominator keeps duplicates from `actual` on purpose: a
-    # model emitting the same obligation twice has double-extracted, and the
-    # score must see that even though matches are counted once.
-    precision = matched / len(actual) if actual else 0.0
-    recall = matched / len(expected_set) if expected_set else 0.0
-    return precision, recall
+    return _matched_precision_recall(expected_set, [key(pair) for pair in actual])
+
+
+def diff_precision_recall(
+    expected: Sequence[tuple[str, str | None]],
+    actual: Sequence[tuple[str, str | None]],
+) -> tuple[float, float]:
+    """Change-detection accuracy matched on (kind, clause_ref) — mechanical
+    grading for the `diff` golden task; description/severity quality awaits
+    a grader.
+
+    Identical versions (both sides empty) score 1.0, not zero: "no change"
+    is a graded outcome, and a golden no-change record must reward an empty
+    diff instead of dividing by zero.
+    """
+    if not expected and not actual:
+        return 1.0, 1.0
+    return _matched_precision_recall(set(expected), list(actual))

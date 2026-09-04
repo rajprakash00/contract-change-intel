@@ -25,7 +25,7 @@ def _fixture_shas() -> dict[str, str]:
     }
 
 
-@pytest.mark.parametrize("task", ["retrieve", "extract_obligations"])
+@pytest.mark.parametrize("task", ["retrieve", "extract_obligations", "diff"])
 def test_golden_records_load_and_carry_unique_ids_per_task(task: str) -> None:
     records = load_records(task)
     assert records, f"no golden records committed for {task!r}; golden/ must stay seeded"
@@ -60,7 +60,25 @@ def test_extract_records_reference_fixture_documents_and_carry_text() -> None:
             assert obligation["owner"] is None or obligation["owner"].strip(), record["id"]
 
 
-@pytest.mark.parametrize("task", ["retrieve", "extract_obligations"])
+_KINDS = {"added", "removed", "modified"}
+
+
+def test_diff_records_tie_their_texts_to_a_committed_fixture() -> None:
+    shas = set(_fixture_shas().values())
+    for record in load_records("diff"):
+        sha = record["input"]["document_sha256"]
+        assert sha in shas, f"{record['id']} references a non-fixture document: {sha}"
+        assert record["input"]["base_text"].strip(), record["id"]
+        assert record["input"]["amended_text"].strip() or record["id"] == "diff-002", (
+            f"{record['id']} amended text is empty (only deliberate no-change "
+            "records may carry an empty amendment)"
+        )
+        for change in record["expected"]["changes"]:
+            assert change["kind"] in _KINDS, f"{record['id']} has unknown kind {change['kind']}"
+            assert change["clause_ref"] is None or change["clause_ref"].strip(), record["id"]
+
+
+@pytest.mark.parametrize("task", ["retrieve", "extract_obligations", "diff"])
 def test_committed_baseline_covers_exactly_the_golden_records(task: str) -> None:
     """Baselines are deliberate snapshots (evals/README.md): adding or removing
     a golden record without refreshing the baseline must fail loudly, or the
