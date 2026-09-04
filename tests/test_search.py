@@ -22,7 +22,7 @@ from app.models.document_text import DocumentText
 from app.repositories import document_chunks as chunks_repo
 from app.repositories import document_texts as texts_repo
 from app.repositories import documents as documents_repo
-from app.services.search import search
+from app.services.search import search, search_document
 from tests.fake_openai import fake_embedding_client
 
 
@@ -248,3 +248,85 @@ class TestSearchService:
         assert hits[0].document_id == document.id
         assert hits[0].filename == "msa.docx"
         assert hits[0].document_sha256 == document.sha256
+
+
+class TestSearchDocumentService:
+    async def test_returns_only_the_named_documents_chunks(self) -> None:
+        # GET /search is tenant-wide; impact mapping (W4·D) needs the
+        # document-scoped variant: the base version's chunks only.
+        tenant_id = uuid.uuid4()
+        base = await make_doc_with_chunks(
+            tenant_id,
+            filename="base.docx",
+            texts=["Supplier shall pay within thirty days."],
+            vectors=[PAYMENT],
+        )
+        await make_doc_with_chunks(
+            tenant_id,
+            filename="amended.docx",
+            texts=["Supplier shall pay within thirty days of invoice."],
+            vectors=[PAYMENT],
+        )
+
+        async with fake_embedding_client([PAYMENT]) as (llm, _), session() as s:
+            hits = await search_document(
+                s, llm=llm, tenant_id=tenant_id, document_id=base.id, query="payment", limit=10
+            )
+
+        assert [hit.document_id for hit in hits] == [base.id]
+
+    async def test_unknown_or_foreign_document_yields_no_hits(self) -> None:
+        tenant_id = uuid.uuid4()
+        await make_doc_with_chunks(
+            tenant_id, filename="msa.docx", texts=["Payment terms apply."], vectors=[PAYMENT]
+        )
+
+        async with fake_embedding_client([PAYMENT]) as (llm, _), session() as s:
+            hits = await search_document(
+                s,
+                llm=llm,
+                tenant_id=tenant_id,
+                document_id=uuid.uuid4(),
+                query="payment",
+                limit=10,
+            )
+
+        assert hits == []
+
+    async def test_full_text_engine_still_finds_chunks_inside_the_document(self) -> None:
+        tenant_id = uuid.uuid4()
+        document = await make_doc_with_chunks(
+            tenant_id,
+            filename="msa.docx",
+            texts=["The supplier grants indemnification against third-party claims."],
+            vectors=[SECRET_CLAUSE],
+        )
+
+        async with fake_embedding_client([unit_vector(3)]) as (llm, _), session() as s:
+            hits = await search_document(
+                s,
+                llm=llm,
+                tenant_id=tenant_id,
+                document_id=document.id,
+                query="indemnification",
+                limit=10,
+            )
+
+        assert [hit.document_id for hit in hits] == [document.id]
+
+    async def test_limit_caps_hits_within_the_document(self) -> None:
+        tenant_id = uuid.uuid4()
+        document = await make_doc_with_chunks(
+            tenant_id,
+            filename="msa.docx",
+            texts=["Clause one about payment.", "Clause two about payment.", "Clause three."],
+            vectors=[PAYMENT, PAYMENT, DELIVERY],
+        )
+
+        async with fake_embedding_client([PAYMENT]) as (llm, _), session() as s:
+            hits = await search_document(
+                s, llm=llm, tenant_id=tenant_id, document_id=document.id, query="payment", limit=1
+            )
+
+        assert len(hits) == 1
+        assert hits[0].document_id == document.id
