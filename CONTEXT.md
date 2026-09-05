@@ -85,5 +85,13 @@ _Avoid_: certainty, score (bare)
 
 **Review Item**:
 An extraction or Impact flagged for a human because its Confidence fell below the
-threshold; resolved by approving or editing.
+threshold; pending until a Reviewer applies a Disposition.
 _Avoid_: flag, exception, queue entry
+
+**Reviewer**:
+The human who resolves Review Items.
+_Avoid_: admin, user (bare)
+
+**Disposition**:
+A Reviewer's resolution of a Review Item: approved, edited, or rejected.
+_Avoid_: decision, status, resolution

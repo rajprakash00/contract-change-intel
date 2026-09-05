@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     # this only bounds how hard it tries before surfacing an LlmError.
     openai_max_retries: int = 2
 
+    # W5·A review queue: LLM output whose Confidence falls strictly below the
+    # per-job-kind threshold is routed to human review as a pending item.
+    review_confidence_threshold_extraction: float = 0.7
+    review_confidence_threshold_impact: float = 0.7
+
 
 @lru_cache
 def get_settings() -> Settings:

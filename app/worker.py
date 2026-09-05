@@ -26,16 +26,27 @@ _QUEUE_COUNT = 3
 
 
 async def run_next_job(
-    session: AsyncSession, *, llm: OpenAiClient, data_dir: str, first: int
+    session: AsyncSession,
+    *,
+    llm: OpenAiClient,
+    data_dir: str,
+    first: int,
+    extraction_review_threshold: float,
+    impact_review_threshold: float,
 ) -> bool:
     """One pass over the queues starting at rotation index `first`; True when a
     job was claimed. Each queue is tried at most once per pass, so a backlog in
     one queue cannot starve the others. Extraction reads parsed text from the
-    database; ingestion alone needs the storage data_dir."""
+    database; ingestion alone needs the storage data_dir. The review thresholds
+    (W5·A) route below-confidence output to human review."""
     queues: tuple[Callable[[], Awaitable[bool]], ...] = (
-        lambda: extraction.run_next_extraction_job(session, llm=llm),
+        lambda: extraction.run_next_extraction_job(
+            session, llm=llm, review_threshold=extraction_review_threshold
+        ),
         lambda: ingestion.run_next_ingestion_job(session, llm=llm, data_dir=data_dir),
-        lambda: change_report.run_next_change_report_job(session, llm=llm),
+        lambda: change_report.run_next_change_report_job(
+            session, llm=llm, review_threshold=impact_review_threshold
+        ),
     )
     for offset in range(len(queues)):
         if await queues[(first + offset) % len(queues)]():
@@ -57,7 +68,14 @@ async def main() -> None:
     try:
         while True:
             async with db.get_sessionmaker()() as session:
-                ran = await run_next_job(session, llm=llm, data_dir=settings.data_dir, first=turn)
+                ran = await run_next_job(
+                    session,
+                    llm=llm,
+                    data_dir=settings.data_dir,
+                    first=turn,
+                    extraction_review_threshold=settings.review_confidence_threshold_extraction,
+                    impact_review_threshold=settings.review_confidence_threshold_impact,
+                )
             turn = (turn + 1) % _QUEUE_COUNT
             # Rotate every pass; idle briefly only when no queue had work.
             if not ran:
