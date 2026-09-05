@@ -6,6 +6,7 @@ from app.models.document_chunk import DocumentChunk
 from app.models.document_text import DocumentText
 from app.models.extraction_job import ExtractionJob, ExtractionJobStatus
 from app.models.ingestion_job import IngestionJob, IngestionJobStatus
+from app.models.review_item import ReviewItem, ReviewItemSource, ReviewItemStatus
 
 __all__ = [
     "AuditLog",
@@ -20,4 +21,7 @@ __all__ = [
     "ExtractionJobStatus",
     "IngestionJob",
     "IngestionJobStatus",
+    "ReviewItem",
+    "ReviewItemSource",
+    "ReviewItemStatus",
 ]

@@ -23,6 +23,7 @@ from app.models.document_chunk import EMBEDDING_DIMENSIONS, DocumentChunk
 from app.models.document_text import DocumentText
 from app.models.extraction_job import ExtractionJob, ExtractionJobStatus
 from app.models.ingestion_job import IngestionJob, IngestionJobStatus
+from app.models.review_item import ReviewItem, ReviewItemStatus
 from app.services.extraction import enqueue_extraction
 from app.services.ingestion import enqueue_ingestion
 from app.storage import local
@@ -71,6 +72,7 @@ async def clean_tables() -> AsyncIterator[None]:
     yield
     async with session() as s:
         await s.execute(delete(DocumentChunk))
+        await s.execute(delete(ReviewItem))
         await s.execute(delete(DocumentText))
         await s.execute(delete(ExtractionJob))
         await s.execute(delete(IngestionJob))
@@ -120,9 +122,23 @@ async def test_round_robin_serves_both_queues_regardless_of_start(data_dir: Path
         fake_embedding_client([FAKE_VECTOR]) as (embed_llm, _),
     ):
         async with session() as s:
-            ran_first = await run_next_job(s, llm=llm, data_dir=str(data_dir), first=0)
+            ran_first = await run_next_job(
+                s,
+                llm=llm,
+                data_dir=str(data_dir),
+                first=0,
+                extraction_review_threshold=0.0,
+                impact_review_threshold=0.0,
+            )
         async with session() as s:
-            ran_second = await run_next_job(s, llm=embed_llm, data_dir=str(data_dir), first=1)
+            ran_second = await run_next_job(
+                s,
+                llm=embed_llm,
+                data_dir=str(data_dir),
+                first=1,
+                extraction_review_threshold=0.0,
+                impact_review_threshold=0.0,
+            )
 
     assert ran_first is True
     assert ran_second is True
@@ -150,7 +166,14 @@ async def test_one_pass_runs_at_most_one_job_per_queue(data_dir: Path) -> None:
     ingestion_job = await enqueue_one_ingestion(document)
 
     async with fake_llm_client(VALID_OUTPUT) as (llm, _), session() as s:
-        ran = await run_next_job(s, llm=llm, data_dir=str(data_dir), first=0)
+        ran = await run_next_job(
+            s,
+            llm=llm,
+            data_dir=str(data_dir),
+            first=0,
+            extraction_review_threshold=0.0,
+            impact_review_threshold=0.0,
+        )
 
     assert ran is True
     async with session() as s:
@@ -168,6 +191,40 @@ async def test_one_pass_runs_at_most_one_job_per_queue(data_dir: Path) -> None:
 
 async def test_idle_queues_report_no_work() -> None:
     async with fake_llm_client(VALID_OUTPUT) as (llm, _), session() as s:
-        ran = await run_next_job(s, llm=llm, data_dir="/nonexistent", first=0)
+        ran = await run_next_job(
+            s,
+            llm=llm,
+            data_dir="/nonexistent",
+            first=0,
+            extraction_review_threshold=0.0,
+            impact_review_threshold=0.0,
+        )
 
     assert ran is False
+
+
+async def test_low_confidence_extraction_is_routed_to_the_review_queue(
+    data_dir: Path,
+) -> None:
+    # The W5·A wiring: the worker threads the per-kind threshold into the
+    # extraction handler, which routes below-threshold items for review.
+    document = await make_text_document(data_dir)
+    await enqueue_one_extraction(document)
+
+    async with fake_llm_client(VALID_OUTPUT) as (llm, _), session() as s:
+        ran = await run_next_job(
+            s,
+            llm=llm,
+            data_dir=str(data_dir),
+            first=0,
+            extraction_review_threshold=0.95,
+            impact_review_threshold=0.0,
+        )
+
+    assert ran is True
+    async with session() as s:
+        items = (await s.execute(select(ReviewItem))).scalars().all()
+    assert len(items) == 1
+    assert items[0].status is ReviewItemStatus.pending
+    assert items[0].item_type == "obligation"
+    assert items[0].confidence == 0.9

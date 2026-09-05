@@ -20,7 +20,7 @@ unit, and every failure becomes a failed job row, never a raise.
 import enum
 import logging
 import uuid
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,7 +35,9 @@ from app.llm.client import LlmError, LlmOutputError, OpenAiClient
 from app.models.change_report_job import ChangeReportJob, ChangeReportJobStatus
 from app.models.document import DocumentStatus
 from app.models.extraction_job import ExtractionJobStatus
+from app.models.review_item import ReviewItemSource
 from app.request_context import current_request_id
+from app.services import review_queue
 from app.services.diffing import Change, Span, detect_changes
 from app.services.documents import DocumentNotFoundError
 from app.services.extraction import Obligation, ObligationExtraction
@@ -265,11 +267,15 @@ async def _parsed_text(session: AsyncSession, document_id: uuid.UUID) -> str:
     return text_row.text
 
 
-async def run_next_change_report_job(session: AsyncSession, *, llm: OpenAiClient) -> bool:
+async def run_next_change_report_job(
+    session: AsyncSession, *, llm: OpenAiClient, review_threshold: float
+) -> bool:
     """Claim and process one queued job; True when a job was claimed.
 
     Every failure — missing parsed text, LLM error — becomes a failed job
-    row, never a raise: a worker loop keeps going after bad jobs.
+    row, never a raise: a worker loop keeps going after bad jobs. Impact
+    mappings whose confidence falls below `review_threshold` (W5·A) are
+    routed to the review queue; the report ships regardless.
     """
     job = await change_report_jobs_repo.claim_next_queued(session)
     if job is None:
@@ -332,6 +338,20 @@ async def run_next_change_report_job(session: AsyncSession, *, llm: OpenAiClient
     }
     await change_report_jobs_repo.mark_completed(session, job, result=result)
     logger.info("change report job completed tenant=%s job=%s", job.tenant_id, job.id)
+    review_candidates = [
+        ("impact", impact, impact["confidence"])
+        for change_impacts in impacts
+        for impact in change_impacts
+    ]
+    await review_queue.route_for_review(
+        session,
+        tenant_id=job.tenant_id,
+        source=ReviewItemSource.impact_mapping,
+        document_id=job.base_document_id,
+        job_id=job.id,
+        candidates=review_candidates,
+        threshold=review_threshold,
+    )
     return True
 
 
@@ -378,7 +398,7 @@ async def _map_impacts(
     changes: list[Change],
     base_text: str,
     amended_text: str,
-) -> list[list[dict]]:
+) -> list[list[dict[str, Any]]]:
     """Per Change: document-scoped search over the base version's chunks only,
     the obligations whose citations overlap the hits as candidates, then one
     structured mapping call → wire-shaped impacts.
@@ -388,7 +408,7 @@ async def _map_impacts(
     obligations = await _base_obligations(session, base_document_id)
     if not obligations:
         return [[] for _ in changes]
-    impacts_per_change: list[list[dict]] = []
+    impacts_per_change: list[list[dict[str, Any]]] = []
     for change in changes:
         query = _impact_query(change, base_text, amended_text)
         hits = (
@@ -411,15 +431,14 @@ async def _map_impacts(
             base_text=base_text,
             amended_text=amended_text,
         )
-        impacts_per_change.append(
-            [
-                {
-                    "clause_ref": obligation.clause_ref,
-                    "description": obligation.description,
-                    "owner": obligation.owner,
-                    "confidence": confidence,
-                }
-                for obligation, confidence in mapped
-            ]
-        )
+        impacts: list[dict[str, Any]] = [
+            {
+                "clause_ref": obligation.clause_ref,
+                "description": obligation.description,
+                "owner": obligation.owner,
+                "confidence": confidence,
+            }
+            for obligation, confidence in mapped
+        ]
+        impacts_per_change.append(impacts)
     return impacts_per_change

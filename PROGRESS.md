@@ -32,14 +32,23 @@ impact mapping in the change report worker: changed wording recalls base
 chunks, citation-overlap candidate selection (`app/services/impact.py`,
 pure + unit-tested), one structured mapping call per Change → affected
 Obligations with per-Impact Confidence (ADR-007); report rows gain
-`impacts` per Change; impact grading eval deferred to W5.
+`impacts` per Change; impact grading eval deferred to W5. · W5·A review
+queue (docs/w5-decisions.md): `review_items` with a flat state machine
+`pending → approved | edited | rejected` — resolutions are terminal (409 on
+re-resolve) and `edited` captures corrected values; the extraction and
+impact-mapping workers route items whose confidence falls strictly below
+the per-kind threshold from settings
+(`review_confidence_threshold_extraction` / `_impact`); reviewer API is
+`GET /review-items[?status=]`, `GET /review-items/{id}`,
+`POST /review-items/{id}/resolution` (Disposition; audited as
+`review.resolve`). Routing is additive — job results ship regardless.
 `OPENAI_API_KEY` live and verified end to end; the 6 CUAD fixtures are
 ingested in the dev DB under the eval tenant.
 
 Baselines (`evals/baselines/`): retrieve recall@5 0.82 / recall@10 0.96;
 extract precision 0.90 / recall 1.0 / citation_validity 1.0; diff
 precision 1.0 / recall 1.0.
-ruff/mypy clean; 285 integration+unit tests green.
+ruff/mypy clean; 303 integration+unit tests green.
 
 ## Open / blocked
 

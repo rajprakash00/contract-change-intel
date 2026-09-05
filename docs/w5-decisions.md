@@ -16,7 +16,8 @@ Flat: `pending → approved | edited | rejected`. `edited` captures corrected
 values before resolution; no re-entry loops. Workers (extraction, impact
 mapping) create Review Items when Confidence falls below the threshold;
 threshold per job kind from settings. Reviewer acts via API; the resolution
-is a **Disposition** (approved / edited / rejected).
+is a **Disposition** (approved / edited / rejected). Routing is additive:
+a job's own result ships regardless; the queue never gates it.
 
 ## Impact-grading eval (W5·B)
 

@@ -21,6 +21,7 @@ from app.models.document import Document, DocumentStatus
 from app.models.document_text import DocumentText
 from app.models.extraction_job import ExtractionJob, ExtractionJobStatus
 from app.models.ingestion_job import IngestionJob, IngestionJobStatus
+from app.models.review_item import ReviewItem, ReviewItemSource, ReviewItemStatus
 from app.repositories import document_texts as texts_repo
 from app.repositories import documents as documents_repo
 from app.repositories import extraction_jobs as jobs_repo
@@ -112,6 +113,7 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 async def clean_tables() -> AsyncIterator[None]:
     yield
     async with session() as s:
+        await s.execute(delete(ReviewItem))
         await s.execute(delete(ExtractionJob))
         await s.execute(delete(IngestionJob))
         await s.execute(delete(DocumentText))
@@ -281,7 +283,7 @@ class TestGetExtractionJob:
 class TestRunNextExtractionJob:
     async def test_no_queued_job_returns_false(self) -> None:
         async with fake_llm_client(extraction_output(0, 8)) as (llm, _), session() as s:
-            ran = await run_next_extraction_job(s, llm=llm)
+            ran = await run_next_extraction_job(s, llm=llm, review_threshold=0.8)
 
         assert ran is False
 
@@ -302,7 +304,7 @@ class TestRunNextExtractionJob:
             ),
             session() as s,
         ):
-            ran = await run_next_extraction_job(s, llm=llm)
+            ran = await run_next_extraction_job(s, llm=llm, review_threshold=0.8)
 
         assert ran is True
         async with session() as s:
@@ -330,7 +332,7 @@ class TestRunNextExtractionJob:
             job = await enqueue_extraction(s, tenant_id=tenant_id, document_id=document.id)
 
         async with fake_llm_client(extraction_output(0, 8)) as (llm, requests), session() as s:
-            ran = await run_next_extraction_job(s, llm=llm)
+            ran = await run_next_extraction_job(s, llm=llm, review_threshold=0.8)
 
         assert ran is True
         assert requests == [], "no LLM call may happen without parsed text"
@@ -355,7 +357,7 @@ class TestRunNextExtractionJob:
             ),
             session() as s,
         ):
-            ran = await run_next_extraction_job(s, llm=llm)
+            ran = await run_next_extraction_job(s, llm=llm, review_threshold=0.8)
 
         assert ran is True
         assert len(requests) == 2, "the gate retries once, never more"
@@ -381,7 +383,7 @@ class TestRunNextExtractionJob:
             ),
             session() as s,
         ):
-            ran = await run_next_extraction_job(s, llm=llm)
+            ran = await run_next_extraction_job(s, llm=llm, review_threshold=0.8)
 
         assert ran is True
         assert len(requests) == 2
@@ -399,7 +401,7 @@ class TestRunNextExtractionJob:
             job = await enqueue_extraction(s, tenant_id=tenant_id, document_id=document.id)
 
         async with fake_llm_client("I cannot help with that.") as (llm, _), session() as s:
-            ran = await run_next_extraction_job(s, llm=llm)
+            ran = await run_next_extraction_job(s, llm=llm, review_threshold=0.8)
 
         assert ran is True, "the handler must swallow LlmError so the worker loop keeps going"
         async with session() as s:
@@ -424,6 +426,7 @@ class TestRunNextExtractionJob:
             ran = await run_next_extraction_job(
                 s,
                 llm=FailingLlm(),  # type: ignore[arg-type]
+                review_threshold=0.8,
             )
 
         assert ran is True
@@ -432,3 +435,67 @@ class TestRunNextExtractionJob:
         assert failed is not None
         assert failed.status is ExtractionJobStatus.failed
         assert "llm call failed" in failed.error
+
+
+class TestReviewRouting:
+    """W5·A: extraction items whose Confidence falls below the threshold are
+    routed to the review queue as pending items; the rest are not."""
+
+    async def test_items_below_the_threshold_become_pending_review_items(self) -> None:
+        tenant_id = uuid.uuid4()
+        document = await make_document(tenant_id)
+        await seed_parsed_text(tenant_id, document.id, PARSED_TEXT)
+        span = (PARSED_TEXT.find("Supplier"), PARSED_TEXT.find("reports."))
+        async with session() as s:
+            job = await enqueue_extraction(s, tenant_id=tenant_id, document_id=document.id)
+
+        # Obligation confidence 0.3 and defined-term confidence 0.7 are both
+        # below the 0.8 threshold.
+        async with (
+            fake_llm_client(extraction_output(*span, confidence=0.3)) as (llm, _),
+            session() as s,
+        ):
+            ran = await run_next_extraction_job(s, llm=llm, review_threshold=0.8)
+
+        assert ran is True
+        async with session() as s:
+            items = (
+                (await s.execute(select(ReviewItem).order_by(ReviewItem.item_type))).scalars().all()
+            )
+        assert [item.item_type for item in items] == ["defined_term", "obligation"]
+        for item in items:
+            assert item.tenant_id == tenant_id
+            assert item.source is ReviewItemSource.extraction
+            assert item.document_id == document.id
+            assert item.job_id == job.id
+            assert item.status is ReviewItemStatus.pending
+            assert item.corrected_values is None
+        obligation = next(item for item in items if item.item_type == "obligation")
+        assert obligation.confidence == 0.3
+        assert obligation.payload == {
+            **expected_result(*span)["obligations"][0],
+            "confidence": 0.3,
+        }
+        term = next(item for item in items if item.item_type == "defined_term")
+        assert term.confidence == 0.7
+        assert term.payload == expected_result(*span)["defined_terms"][0]
+
+    async def test_items_at_or_above_the_threshold_are_not_routed(self) -> None:
+        tenant_id = uuid.uuid4()
+        document = await make_document(tenant_id)
+        await seed_parsed_text(tenant_id, document.id, PARSED_TEXT)
+        span = (PARSED_TEXT.find("Supplier"), PARSED_TEXT.find("reports."))
+        async with session() as s:
+            await enqueue_extraction(s, tenant_id=tenant_id, document_id=document.id)
+
+        # Confidences 0.9 and 0.7: exactly at the threshold is not below it.
+        async with (
+            fake_llm_client(extraction_output(*span)) as (llm, _),
+            session() as s,
+        ):
+            ran = await run_next_extraction_job(s, llm=llm, review_threshold=0.7)
+
+        assert ran is True
+        async with session() as s:
+            items = (await s.execute(select(ReviewItem))).scalars().all()
+        assert items == []

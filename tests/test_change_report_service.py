@@ -12,7 +12,7 @@ import uuid
 from collections.abc import AsyncIterator
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.db as db
@@ -25,6 +25,7 @@ from app.models.document import Document, DocumentStatus
 from app.models.document_chunk import EMBEDDING_DIMENSIONS, DocumentChunk
 from app.models.document_text import DocumentText
 from app.models.extraction_job import ExtractionJob, ExtractionJobStatus
+from app.models.review_item import ReviewItem, ReviewItemSource, ReviewItemStatus
 from app.services.change_report import (
     AmendmentMismatchError,
     ChangeReportJobNotFoundError,
@@ -62,6 +63,7 @@ async def clean_tables() -> AsyncIterator[None]:
     yield
     sessionmaker = db.get_sessionmaker()
     async with sessionmaker() as session:
+        await session.execute(delete(ReviewItem))
         await session.execute(delete(ChangeReportJob))
         await session.execute(delete(ExtractionJob))
         await session.execute(delete(DocumentChunk))
@@ -377,7 +379,7 @@ class TestRunNextChangeReportJob:
             fake_llm_client(EXPLANATION_OUTPUT) as (llm, requests),
             db.get_sessionmaker()() as session,
         ):
-            ran = await run_next_change_report_job(session, llm=llm)
+            ran = await run_next_change_report_job(session, llm=llm, review_threshold=0.5)
 
         assert ran is True
         assert len(requests) == 1, "exactly one structured explanation call per version pair"
@@ -411,7 +413,7 @@ class TestRunNextChangeReportJob:
             ) as (llm, requests),
             db.get_sessionmaker()() as session,
         ):
-            ran = await run_next_change_report_job(session, llm=llm)
+            ran = await run_next_change_report_job(session, llm=llm, review_threshold=0.5)
 
         assert ran is True
         chat_calls = [r for r in requests if r.url.path.endswith("/chat/completions")]
@@ -450,7 +452,7 @@ class TestRunNextChangeReportJob:
             ),
             db.get_sessionmaker()() as session,
         ):
-            ran = await run_next_change_report_job(session, llm=llm)
+            ran = await run_next_change_report_job(session, llm=llm, review_threshold=0.5)
 
         assert ran is True
         assert len(requests) == 1, "no obligations to map: no search, no mapping call"
@@ -484,7 +486,7 @@ class TestRunNextChangeReportJob:
             ),
             db.get_sessionmaker()() as session,
         ):
-            ran = await run_next_change_report_job(session, llm=llm)
+            ran = await run_next_change_report_job(session, llm=llm, review_threshold=0.5)
 
         assert ran is True
         # The scoped search still embeds its query, but with no candidates
@@ -513,7 +515,7 @@ class TestRunNextChangeReportJob:
             ) as (llm, _),
             db.get_sessionmaker()() as session,
         ):
-            ran = await run_next_change_report_job(session, llm=llm)
+            ran = await run_next_change_report_job(session, llm=llm, review_threshold=0.5)
 
         assert ran is True
         async with db.get_sessionmaker()() as session:
@@ -540,7 +542,7 @@ class TestRunNextChangeReportJob:
             fake_llm_client(EXPLANATION_OUTPUT) as (llm, requests),
             db.get_sessionmaker()() as session,
         ):
-            ran = await run_next_change_report_job(session, llm=llm)
+            ran = await run_next_change_report_job(session, llm=llm, review_threshold=0.5)
 
         assert ran is True
         assert requests == []
@@ -564,7 +566,7 @@ class TestRunNextChangeReportJob:
             fake_llm_client("I cannot help with that.") as (llm, _),
             db.get_sessionmaker()() as session,
         ):
-            ran = await run_next_change_report_job(session, llm=llm)
+            ran = await run_next_change_report_job(session, llm=llm, review_threshold=0.5)
 
         assert ran is True
         async with db.get_sessionmaker()() as session:
@@ -590,7 +592,7 @@ class TestRunNextChangeReportJob:
             fake_llm_client(mismatched) as (llm, _),
             db.get_sessionmaker()() as session,
         ):
-            ran = await run_next_change_report_job(session, llm=llm)
+            ran = await run_next_change_report_job(session, llm=llm, review_threshold=0.5)
 
         assert ran is True
         async with db.get_sessionmaker()() as session:
@@ -602,7 +604,7 @@ class TestRunNextChangeReportJob:
             fake_llm_client(EXPLANATION_OUTPUT) as (llm, _),
             db.get_sessionmaker()() as session,
         ):
-            ran = await run_next_change_report_job(session, llm=llm)
+            ran = await run_next_change_report_job(session, llm=llm, review_threshold=0.5)
 
         assert ran is False
 
@@ -641,3 +643,74 @@ class TestExplainChangesGate:
         async with fake_llm_client(partial) as (llm, _):
             with pytest.raises(LlmOutputError):
                 await explain_changes(llm, changes=changes, base_text=base, amended_text=amended)
+
+
+class TestImpactReviewRouting:
+    """W5·A: impact mappings whose Confidence falls below the threshold are
+    routed to the review queue; the report itself still carries the mapping."""
+
+    async def test_impact_below_the_threshold_becomes_a_pending_review_item(self) -> None:
+        base, amended = await ready_pair_with_base_obligation()
+        async with db.get_sessionmaker()() as session:
+            job = await enqueue_change_report(
+                session,
+                tenant_id=base.tenant_id,
+                base_document_id=base.id,
+                amended_document_id=amended.id,
+            )
+
+        # The mapping reports confidence 0.8; threshold 0.9 routes it.
+        async with (
+            fake_llm_with_embeddings_client(
+                [EXPLANATION_OUTPUT, IMPACT_OUTPUT], [CHUNK_EMBEDDING]
+            ) as (llm, _),
+            db.get_sessionmaker()() as session,
+        ):
+            ran = await run_next_change_report_job(session, llm=llm, review_threshold=0.9)
+
+        assert ran is True
+        async with db.get_sessionmaker()() as session:
+            items = (await session.execute(select(ReviewItem))).scalars().all()
+        assert len(items) == 1
+        item = items[0]
+        assert item.tenant_id == base.tenant_id
+        assert item.source is ReviewItemSource.impact_mapping
+        assert item.item_type == "impact"
+        assert item.document_id == base.id
+        assert item.job_id == job.id
+        assert item.status is ReviewItemStatus.pending
+        assert item.confidence == 0.8
+        assert item.payload == {
+            "clause_ref": "2.1",
+            "description": "Licensor shall deliver within 14 days.",
+            "owner": "Licensor",
+            "confidence": 0.8,
+        }
+        # The report itself is untouched: routing is additive, not gating.
+        async with db.get_sessionmaker()() as session:
+            done = await get_change_report_job(session, tenant_id=base.tenant_id, job_id=job.id)
+        assert done.status is ChangeReportJobStatus.completed
+        assert done.result["changes"][0]["impacts"] != []
+
+    async def test_impact_at_or_above_the_threshold_is_not_routed(self) -> None:
+        base, amended = await ready_pair_with_base_obligation()
+        async with db.get_sessionmaker()() as session:
+            await enqueue_change_report(
+                session,
+                tenant_id=base.tenant_id,
+                base_document_id=base.id,
+                amended_document_id=amended.id,
+            )
+
+        async with (
+            fake_llm_with_embeddings_client(
+                [EXPLANATION_OUTPUT, IMPACT_OUTPUT], [CHUNK_EMBEDDING]
+            ) as (llm, _),
+            db.get_sessionmaker()() as session,
+        ):
+            ran = await run_next_change_report_job(session, llm=llm, review_threshold=0.8)
+
+        assert ran is True
+        async with db.get_sessionmaker()() as session:
+            items = (await session.execute(select(ReviewItem))).scalars().all()
+        assert items == []

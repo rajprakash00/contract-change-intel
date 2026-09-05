@@ -24,7 +24,9 @@ import app.repositories.ingestion_jobs as ingestion_jobs_repo
 from app.llm.client import LlmError, LlmOutputError, OpenAiClient
 from app.models.document import DocumentStatus
 from app.models.extraction_job import ExtractionJob, ExtractionJobStatus
+from app.models.review_item import ReviewItemSource
 from app.request_context import current_request_id
+from app.services import review_queue
 from app.services.documents import DocumentNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -236,13 +238,17 @@ async def get_extraction_job(
     return job
 
 
-async def run_next_extraction_job(session: AsyncSession, *, llm: OpenAiClient) -> bool:
+async def run_next_extraction_job(
+    session: AsyncSession, *, llm: OpenAiClient, review_threshold: float
+) -> bool:
     """Claim and process one queued job; True when a job was claimed.
 
     The LLM sees the parsed text from document_texts — the same canonical text
     citation spans point into — never the stored raw bytes. Every failure —
     missing parsed text, LLM error — becomes a failed job row, never a raise:
-    a worker loop keeps going after bad jobs.
+    a worker loop keeps going after bad jobs. Items whose confidence falls
+    below `review_threshold` (W5·A) are routed to the review queue; the job's
+    result ships regardless.
     """
     job = await extraction_jobs_repo.claim_next_queued(session)
     if job is None:
@@ -277,4 +283,30 @@ async def run_next_extraction_job(session: AsyncSession, *, llm: OpenAiClient) -
         session, job, result=extraction.model_dump(mode="json")
     )
     logger.info("extraction job completed tenant=%s job=%s", job.tenant_id, job.id)
+    await _route_low_confidence_items(
+        session, job=job, extraction=extraction, threshold=review_threshold
+    )
     return True
+
+
+async def _route_low_confidence_items(
+    session: AsyncSession, *, job: ExtractionJob, extraction: ObligationExtraction, threshold: float
+) -> None:
+    await review_queue.route_for_review(
+        session,
+        tenant_id=job.tenant_id,
+        source=ReviewItemSource.extraction,
+        document_id=job.document_id,
+        job_id=job.id,
+        candidates=[
+            *(
+                ("obligation", item.model_dump(mode="json"), item.confidence)
+                for item in extraction.obligations
+            ),
+            *(
+                ("defined_term", item.model_dump(mode="json"), item.confidence)
+                for item in extraction.defined_terms
+            ),
+        ],
+        threshold=threshold,
+    )

@@ -33,6 +33,7 @@ from app.services.extraction import (
     ExtractionJobNotFoundError,
 )
 from app.services.ingestion import IngestionJobConflictError, IngestionJobNotFoundError
+from app.services.review_queue import ReviewItemAlreadyResolvedError, ReviewItemNotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,18 @@ async def _change_prerequisite_missing(_: Request, exc: PrerequisiteMissingError
     return _detail_response(status.HTTP_409_CONFLICT, detail)
 
 
+async def _review_item_not_found(_: Request, exc: ReviewItemNotFoundError) -> JSONResponse:
+    return _detail_response(status.HTTP_404_NOT_FOUND, str(exc))
+
+
+async def _review_item_already_resolved(
+    _: Request, exc: ReviewItemAlreadyResolvedError
+) -> JSONResponse:
+    # The state machine is flat and terminal (W5·A): re-resolving a resolved
+    # item is a caller-sequencing error, not a missing resource.
+    return _detail_response(status.HTTP_409_CONFLICT, str(exc))
+
+
 # LlmError has no raising route today (LLM calls live in the worker, not the
 # request path); the mapping exists so any future synchronous surface inherits
 # the app-wide table instead of inventing per-route handling.
@@ -145,6 +158,8 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.exception_handler(ChangeReportJobNotFoundError)(_change_report_job_not_found)
     app.exception_handler(AmendmentMismatchError)(_amendment_mismatch)
     app.exception_handler(PrerequisiteMissingError)(_change_prerequisite_missing)
+    app.exception_handler(ReviewItemNotFoundError)(_review_item_not_found)
+    app.exception_handler(ReviewItemAlreadyResolvedError)(_review_item_already_resolved)
     app.exception_handler(LlmCallError)(_llm_call_error)
     app.exception_handler(LlmOutputError)(_llm_output_error)
     app.exception_handler(LlmNotConfiguredError)(_llm_not_configured)
