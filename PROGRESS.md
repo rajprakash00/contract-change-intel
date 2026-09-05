@@ -51,9 +51,11 @@ ruff/mypy clean; 285 integration+unit tests green.
 
 ## Next
 
-Settled design: `docs/w4-decisions.md` (ADRs land with the blocks that need
-them; ADR-007 is written). W4 is complete; W5 (review queue,
-multi-tenancy/RBAC) is next per PLAN.
+Settled design: `docs/w4-decisions.md` (W4 complete) and `docs/w5-decisions.md`
+(W5·A review queue → W5·B audit trail + impact-grading eval → W5·C OIDC auth
+via Auth0; then W6·A thin Next.js UI → W6·B AWS ECS/RDS deploy via Terraform →
+deployed API + UI + writeup with eval numbers). Deferred: rate limits, load
+tests, Anthropic spike, retention.
 
 ## Gotchas
 
