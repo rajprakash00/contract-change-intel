@@ -1,7 +1,8 @@
 """Unit tests for the eval metric math (evals/README.md metric definitions).
 
 Pure logic: recall@k for retrieval, the mechanical half of citation validity,
-and extraction accuracy matched on (clause_ref, owner).
+extraction accuracy matched on (clause_ref, owner), diff accuracy matched on
+(kind, clause_ref), and impact-mapping accuracy matched on (clause_ref, owner).
 """
 
 import pytest
@@ -11,6 +12,7 @@ from evals.metrics import (
     citation_spans_valid,
     diff_precision_recall,
     extraction_precision_recall,
+    impact_precision_recall,
     recall_at_k,
 )
 
@@ -180,6 +182,65 @@ class TestDiffPrecisionRecall:
 
     def test_detected_change_without_a_golden_expectation_lowers_precision(self) -> None:
         precision, recall = diff_precision_recall([], [("added", "2.9")])
+
+        assert precision == 0.0
+        assert recall == 0.0
+
+
+class TestImpactPrecisionRecall:
+    def test_matched_on_clause_ref_and_owner(self) -> None:
+        expected = [("2.2", "LICENSOR")]
+        actual = [("2.2", "LICENSOR")]
+
+        precision, recall = impact_precision_recall(expected, actual)
+
+        assert precision == 1.0
+        assert recall == 1.0
+
+    def test_owner_matches_case_insensitively(self) -> None:
+        precision, recall = impact_precision_recall([("2.3", "plan_b")], [("2.3", "PLAN_B")])
+
+        assert precision == 1.0
+        assert recall == 1.0
+
+    def test_unaffected_obligation_mapped_does_not_match(self) -> None:
+        precision, recall = impact_precision_recall([("2.2", "LICENSOR")], [("3.1", "plan_b")])
+
+        assert precision == 0.0
+        assert recall == 0.0
+
+    def test_extra_mappings_lower_precision(self) -> None:
+        precision, _ = impact_precision_recall(
+            [("2.2", "LICENSOR")], [("2.2", "LICENSOR"), ("3.1", "plan_b")]
+        )
+
+        assert precision == pytest.approx(1 / 2)
+
+    def test_missed_affected_obligations_lower_recall(self) -> None:
+        _, recall = impact_precision_recall(
+            [("2.3", "LICENSOR"), ("3.1", "plan_b")], [("2.3", "LICENSOR")]
+        )
+
+        assert recall == pytest.approx(1 / 2)
+
+    def test_duplicate_mappings_count_once(self) -> None:
+        precision, recall = impact_precision_recall(
+            [("2.2", "LICENSOR")], [("2.2", "LICENSOR"), ("2.2", "LICENSOR")]
+        )
+
+        assert precision == pytest.approx(1 / 2)
+        assert recall == 1.0
+
+    def test_no_impact_mapped_where_none_expected_scores_perfect(self) -> None:
+        """A change that affects no listed obligation, mapped to nothing, is
+        a correct outcome — not a divide-by-zero zero."""
+        precision, recall = impact_precision_recall([], [])
+
+        assert precision == 1.0
+        assert recall == 1.0
+
+    def test_mapping_when_nothing_was_expected_lowers_precision(self) -> None:
+        precision, recall = impact_precision_recall([], [("2.1", "LICENSOR")])
 
         assert precision == 0.0
         assert recall == 0.0

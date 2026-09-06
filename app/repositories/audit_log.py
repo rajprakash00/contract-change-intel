@@ -1,8 +1,9 @@
-"""Insert-only writes for the append-only audit trail."""
+"""Insert-only writes + tenant-scoped reads for the append-only audit trail."""
 
 import uuid
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit_log import AuditLog
@@ -29,3 +30,21 @@ async def record(
         )
     )
     await session.commit()
+
+
+async def list_for_tenant(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    action: str | None = None,
+    limit: int,
+) -> list[AuditLog]:
+    """The tenant's trail, chronological: an audit log reads as a timeline,
+    oldest first, and the limit truncates from the newest end."""
+    query = select(AuditLog).where(AuditLog.tenant_id == tenant_id)
+    if action is not None:
+        query = query.where(AuditLog.action == action)
+    result = await session.execute(
+        query.order_by(AuditLog.created_at.asc(), AuditLog.id.asc()).limit(limit)
+    )
+    return list(result.scalars().all())

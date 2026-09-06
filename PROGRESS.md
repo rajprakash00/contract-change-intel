@@ -41,27 +41,39 @@ the per-kind threshold from settings
 (`review_confidence_threshold_extraction` / `_impact`); reviewer API is
 `GET /review-items[?status=]`, `GET /review-items/{id}`,
 `POST /review-items/{id}/resolution` (Disposition; audited as
-`review.resolve`). Routing is additive — job results ship regardless.
+`review.resolve`). Routing is additive — job results ship regardless. ·
+W5·B audit trail read + impact-grading eval: the six mutating services
+already write append-only `audit_log` rows (actor=tenant, request_id,
+action, resource target, detail); the read surface is
+`GET /audit-log[?action=][&limit=]` — tenant-scoped, chronological,
+limit truncates from the newest end (W5·B in docs/w5-decisions.md) —
+and the deferred W4·D impact eval landed as the `impact_map` golden
+task (one real mapping call per detected Change against the record's
+obligations as candidates; per-Change precision/recall matched on
+(clause_ref, owner) via `evals.metrics.impact_precision_recall`).
+
 `OPENAI_API_KEY` live and verified end to end; the 6 CUAD fixtures are
 ingested in the dev DB under the eval tenant.
 
 Baselines (`evals/baselines/`): retrieve recall@5 0.82 / recall@10 0.96;
 extract precision 0.90 / recall 1.0 / citation_validity 1.0; diff
-precision 1.0 / recall 1.0.
-ruff/mypy clean; 303 integration+unit tests green.
+precision 1.0 / recall 1.0; impact_map precision 0.83 / recall 0.75
+(first live run, gpt-4o-mini — single-run wobble per the README caveat).
+ruff/mypy clean; 322 integration+unit tests green.
 
 ## Open / blocked
 
 - `ANTHROPIC_API_KEY` (owner) — blocks the Anthropic SDK spike.
 - First GitHub Actions run unverified (CI is green locally).
-- DELETE has no retention window; audit_log retention/read APIs deferred to
-  review-queue work.
+- DELETE has no retention window; audit_log retention APIs still deferred
+  (the tenant-scoped read API landed in W5·B). The `audit_log` `actor`
+  column lands with W5·C auth — today's only principal is the tenant.
 - Auth deferred to multi-tenancy work (W5).
 
 ## Next
 
 Settled design: `docs/w4-decisions.md` (W4 complete) and `docs/w5-decisions.md`
-(W5·A review queue → W5·B audit trail + impact-grading eval → W5·C OIDC auth
+(W5·A review queue + W5·B audit trail/impact eval done → W5·C OIDC auth
 via Auth0; then W6·A thin Next.js UI → W6·B AWS ECS/RDS deploy via Terraform →
 deployed API + UI + writeup with eval numbers). Deferred: rate limits, load
 tests, Anthropic spike, retention.

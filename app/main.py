@@ -6,7 +6,7 @@ from fastapi import FastAPI
 
 import app.api.routes.change_reports as change_reports
 import app.db as db
-from app.api.routes import documents, extraction, health, ingestion, reviews, search
+from app.api.routes import audit, documents, extraction, health, ingestion, reviews, search
 from app.config import get_settings
 from app.errors import register_exception_handlers
 from app.logging_config import configure_logging
@@ -36,6 +36,7 @@ def create_app() -> FastAPI:
     app.include_router(search.router)
     app.include_router(change_reports.router)
     app.include_router(reviews.router)
+    app.include_router(audit.router)
     register_exception_handlers(app)
     return app
 

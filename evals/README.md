@@ -21,6 +21,12 @@ Fixed targets so golden records have something stable to be scored against:
   golden record, matched on (`kind`, `clause_ref`); description and severity
   are free text and stay graded (not exact) until a grader exists. Identical
   versions score 1.0: "no change" is a graded outcome, not a division by zero.
+- **Impact-mapping accuracy** — per Change, precision/recall of the mapped
+  affected Obligations vs the golden affected list, matched on
+  (`clause_ref`, `owner`, owner case-insensitive like extraction). A Change
+  that affects nothing, mapped to nothing, scores 1.0: "affects nothing" is a
+  graded outcome. Confidence calibration is not graded mechanically until a
+  grader exists.
 - **Task completion** — end-to-end Change Report on golden
   agreement/amendment pairs, judged against a human rubric (not automated
   until the rubric is written).
@@ -92,6 +98,7 @@ attributable):
 uv run python -m evals.harness --task retrieve --k 5 --k 10
 uv run python -m evals.harness --task extract_obligations
 uv run python -m evals.harness --task diff
+uv run python -m evals.harness --task impact_map
 ```
 
 Per-task record shapes:
@@ -115,7 +122,17 @@ Per-task record shapes:
   cheap, deterministic, and needs no API key. The base text is a fixture's
   parsed text (pinned by sha256 like the other tasks); `amended_text` is a
   synthetic amendment of it, hand-labelled with the changes the edit makes.
-  Impact grading is deferred to W5 — the mapping must exist first.
+- `impact_map` — input `{"document_sha256", "base_text", "amended_text",
+  "obligations"}`; expected `{"changes": [{"kind", "clause_ref", "affected":
+  [{"clause_ref", "owner"}]}]}`. Scored with per-Change precision/recall
+  matched on (clause_ref, owner), averaged over the detected Changes. The
+  texts run through the real parse + diff pipeline and each detected Change
+  makes one real mapping call (app/services/impact.py) against the record's
+  obligations as candidates — capped at the production CANDIDATE_LIMIT, so
+  an API key is needed but no database. The record's obligations stand in
+  for the candidate selection production performs (citation-overlap with
+  retrieved chunks — pure logic, unit-tested). Affected lists are
+  hand-labelled; a Change that affects no listed obligation expects `[]`.
 
 Metric math is pure (`evals/metrics.py`, unit-tested); the harness only wires
 records → pipeline → scores. Graded description comparison still awaits a
