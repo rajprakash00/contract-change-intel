@@ -20,7 +20,15 @@ Record shapes (see evals/README.md for the JSONL rationale):
   {"changes": [{"kind", "clause_ref"}]} — matched on (kind, clause_ref).
   Graded mechanically (W4·C): the texts run through the real parse + diff
   pipeline with no LLM in the loop, so the task is cheap and deterministic.
-  Impact grading is deferred to W5 — the mapping must exist first.
+- impact_map: input {"document_sha256", "base_text", "amended_text",
+  "obligations"}; expected {"changes": [{"kind", "clause_ref",
+  "affected": [{"clause_ref", "owner"}]}]} — graded mechanically (W5·B) with
+  evals.metrics.impact_precision_recall per Change. The record's obligations
+  are the candidate list (production narrows them by citation-overlap with
+  retrieved chunks — pure logic, unit-tested — but the harness has no
+  database, so every golden Change maps against the full list, capped at the
+  production CANDIDATE_LIMIT). One real mapping call per Change, so the task
+  needs an API key but no database.
 
 Citation validity is graded mechanically against the record's input text
 (evals.metrics.citation_spans_valid): the pipeline's strict gate rejects
@@ -43,14 +51,16 @@ from typing import Any
 from app.config import Settings, get_settings
 from app.db import dispose_engine, get_sessionmaker, init_engine
 from app.llm.client import LlmOutputError, OpenAiClient
-from app.services.diffing import detect_changes
-from app.services.extraction import extract_obligations
+from app.services.diffing import Change, detect_changes
+from app.services.extraction import Citation, Obligation, extract_obligations
+from app.services.impact import CANDIDATE_LIMIT, map_change_impacts
 from app.services.parsing import parse
 from app.services.search import search
 from evals.metrics import (
     citation_spans_valid,
     diff_precision_recall,
     extraction_precision_recall,
+    impact_precision_recall,
     recall_at_k,
 )
 
@@ -184,6 +194,89 @@ async def run_diff(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+async def run_impact(records: list[dict[str, Any]], llm: OpenAiClient) -> dict[str, Any]:
+    """The impact_map task (W5·B): parse both texts, align + diff, then one
+    real mapping call per detected Change against the record's obligations as
+    candidates. Grades the mapping on (clause_ref, owner) per Change —
+    including Changes the golden record did not expect (graded against an
+    empty affected list) and expected Changes the diff did not detect (zero).
+    No database session; an API key is the only infrastructure it needs."""
+    per_record: dict[str, dict[str, float]] = {}
+    for record in records:
+        base_text = parse("text/plain", record["input"]["base_text"].encode()).text
+        amended_text = parse("text/plain", record["input"]["amended_text"].encode()).text
+        candidates = _candidates(record["input"]["obligations"])
+        changes = detect_changes(base_text, amended_text)
+        expected_by_key = {
+            (change["kind"], change["clause_ref"]): [
+                (impact["clause_ref"], impact.get("owner")) for impact in change["affected"]
+            ]
+            for change in record["expected"]["changes"]
+        }
+        per_change: dict[str, dict[str, float]] = {}
+        for change in changes:
+            key = (change.kind.value, change.clause_ref)
+            expected = expected_by_key.get(key, [])
+            if candidates:
+                try:
+                    mapped = await map_change_impacts(
+                        llm,
+                        change=change,
+                        candidates=candidates,
+                        base_text=base_text,
+                        amended_text=amended_text,
+                    )
+                except LlmOutputError:
+                    # The mapping failed its output gate: nothing usable for
+                    # this Change, so it scores zero across the board.
+                    per_change[_change_key(change)] = {"precision": 0.0, "recall": 0.0}
+                    continue
+            else:
+                mapped = []
+            actual = [(obligation.clause_ref, obligation.owner) for obligation, _ in mapped]
+            precision, recall = impact_precision_recall(expected, actual)
+            per_change[_change_key(change)] = {"precision": precision, "recall": recall}
+        per_record[record["id"]] = (
+            _aggregate(per_change, ["precision", "recall"])
+            if per_change
+            else {
+                "precision": 1.0,
+                "recall": 1.0,
+            }
+        )
+    return {
+        "task": "impact_map",
+        "records": len(per_record),
+        "metrics": _aggregate(per_record, ["precision", "recall"]),
+        "per_record": per_record,
+    }
+
+
+def _change_key(change: Change) -> str:
+    """Per-change score key: (kind, clause_ref) rendered readably — clause_ref
+    is None only for the unnumbered preamble."""
+    return f"{change.kind.value}:{change.clause_ref}"
+
+
+def _candidates(obligations: list[dict[str, Any]]) -> list[Obligation]:
+    """The record's golden obligations as candidate Obligations for the
+    mapping calls. Capped at the production CANDIDATE_LIMIT; confidence is
+    not graded here, so candidates carry a neutral 1.0."""
+    return [
+        Obligation(
+            clause_ref=o["clause_ref"],
+            description=o["description"],
+            owner=o.get("owner"),
+            citation=Citation(
+                char_start=o["citation"]["char_start"],
+                char_end=o["citation"]["char_end"],
+            ),
+            confidence=1.0,
+        )
+        for o in obligations[:CANDIDATE_LIMIT]
+    ]
+
+
 def _stamp(report: dict[str, Any], settings: Settings) -> dict[str, Any]:
     """Make a stored report self-describing: what ran it and when. Reports
     land in evals/runs/ (gitignored) or evals/baselines/ (committed), where
@@ -196,7 +289,9 @@ def _stamp(report: dict[str, Any], settings: Settings) -> dict[str, Any]:
 async def main() -> int:
     parser = argparse.ArgumentParser(description="Run golden-record evals.")
     parser.add_argument(
-        "--task", required=True, choices=("retrieve", "extract_obligations", "diff")
+        "--task",
+        required=True,
+        choices=("retrieve", "extract_obligations", "diff", "impact_map"),
     )
     parser.add_argument(
         "--k", type=int, action="append", default=[], help="recall@k (retrieve only)"
@@ -215,25 +310,30 @@ async def main() -> int:
         return 0
 
     settings = get_settings()
-    # Only tasks that call the model construct a client: diff runs the pure
-    # pipeline, so it needs neither an API key nor the database.
+    # Tasks that call the model construct a client. Only retrieve touches the
+    # database; diff runs the pure pipeline, impact_map the pure pipeline plus
+    # per-Change mapping calls — neither needs a session or an engine.
     llm = OpenAiClient(settings) if args.task != "diff" else None
-    if llm is not None:
+    if args.task == "retrieve":
+        assert llm is not None
         init_engine(settings.database_url)
     try:
         if args.task == "retrieve":
-            assert llm is not None
             report = await run_retrieve(
                 records, llm, ks=args.k or list(DEFAULT_KS), settings=settings
             )
         elif args.task == "extract_obligations":
             assert llm is not None
             report = await run_extraction(records, llm, settings=settings)
+        elif args.task == "impact_map":
+            assert llm is not None
+            report = await run_impact(records, llm)
         else:
             report = await run_diff(records)
     finally:
         if llm is not None:
             await llm.aclose()
+        if args.task == "retrieve":
             await dispose_engine()
     report = _stamp(report, settings)
     if args.out:

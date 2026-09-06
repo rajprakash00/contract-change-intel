@@ -91,3 +91,28 @@ def diff_precision_recall(
     if not expected and not actual:
         return 1.0, 1.0
     return _matched_precision_recall(set(expected), list(actual))
+
+
+def impact_precision_recall(
+    expected: Sequence[tuple[str, str | None]],
+    actual: Sequence[tuple[str, str | None]],
+) -> tuple[float, float]:
+    """Impact-mapping accuracy for one Change, matched on (clause_ref, owner)
+    — mechanical grading for the `impact_map` golden task; confidence
+    calibration awaits a grader.
+
+    Owner matching is case-insensitive, same as extraction: a correct mapping
+    must not lose the match to party-name capitalisation alone. A change that
+    affects no listed obligation and maps to nothing scores 1.0, not zero:
+    "affects nothing" is a graded outcome (an added payment clause against an
+    obligation list with no payment obligation, say).
+    """
+    if not expected and not actual:
+        return 1.0, 1.0
+
+    def key(pair: tuple[str, str | None]) -> tuple[str, str | None]:
+        clause_ref, owner = pair
+        return (clause_ref, owner.casefold() if owner is not None else None)
+
+    expected_set = {key(pair) for pair in expected}
+    return _matched_precision_recall(expected_set, [key(pair) for pair in actual])

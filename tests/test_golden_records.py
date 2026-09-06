@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from app.services.impact import CANDIDATE_LIMIT
 from evals.harness import load_records
 from evals.seed_fixtures import EVAL_TENANT_ID, FIXTURES_DIR
 
@@ -25,7 +26,7 @@ def _fixture_shas() -> dict[str, str]:
     }
 
 
-@pytest.mark.parametrize("task", ["retrieve", "extract_obligations", "diff"])
+@pytest.mark.parametrize("task", ["retrieve", "extract_obligations", "diff", "impact_map"])
 def test_golden_records_load_and_carry_unique_ids_per_task(task: str) -> None:
     records = load_records(task)
     assert records, f"no golden records committed for {task!r}; golden/ must stay seeded"
@@ -78,7 +79,41 @@ def test_diff_records_tie_their_texts_to_a_committed_fixture() -> None:
             assert change["clause_ref"] is None or change["clause_ref"].strip(), record["id"]
 
 
-@pytest.mark.parametrize("task", ["retrieve", "extract_obligations", "diff"])
+def test_impact_records_tie_their_texts_to_a_fixture_and_carry_cited_obligations() -> None:
+    """Impact records restate the diff task's texts plus the base version's
+    obligations: citations must sit inside the parsed base text so the mapping
+    call sees grounded candidates, and every expected change carries an
+    affected list keyed on (kind, clause_ref)."""
+    shas = set(_fixture_shas().values())
+    for record in load_records("impact_map"):
+        sha = record["input"]["document_sha256"]
+        assert sha in shas, f"{record['id']} references a non-fixture document: {sha}"
+        assert record["input"]["base_text"].strip(), record["id"]
+        assert record["input"]["amended_text"].strip(), record["id"]
+        obligations = record["input"]["obligations"]
+        assert obligations, f"{record['id']} lists no candidate obligations"
+        assert len(obligations) <= CANDIDATE_LIMIT, (
+            f"{record['id']} lists more obligations than the harness will show the "
+            "mapping call — anything past CANDIDATE_LIMIT is silently unmatchable"
+        )
+        for obligation in obligations:
+            span = obligation["citation"]
+            text = record["input"]["base_text"][span["char_start"] : span["char_end"]]
+            assert (
+                0 <= span["char_start"] < span["char_end"] <= len(record["input"]["base_text"])
+            ), f"{record['id']} obligation {obligation['clause_ref']} cites outside the text"
+            assert text.strip(), (
+                f"{record['id']} obligation {obligation['clause_ref']} cites empty text"
+            )
+        for change in record["expected"]["changes"]:
+            assert change["kind"] in _KINDS, f"{record['id']} has unknown kind {change['kind']}"
+            assert change["clause_ref"] is None or change["clause_ref"].strip(), record["id"]
+            for impact in change["affected"]:
+                assert impact["clause_ref"].strip(), record["id"]
+                assert impact["owner"] is None or impact["owner"].strip(), record["id"]
+
+
+@pytest.mark.parametrize("task", ["retrieve", "extract_obligations", "diff", "impact_map"])
 def test_committed_baseline_covers_exactly_the_golden_records(task: str) -> None:
     """Baselines are deliberate snapshots (evals/README.md): adding or removing
     a golden record without refreshing the baseline must fail loudly, or the
