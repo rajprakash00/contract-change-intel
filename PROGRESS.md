@@ -61,7 +61,13 @@ reviewer-or-admin, reads any authenticated principal; `audit_log.actor`
 column landed (token subject; NULL for pre-auth rows); no "auth off" mode
 — unconfigured auth is 503, `/healthz` stays open; tests fake the JWKS
 wire at the transport seam (`tests/fake_jwks.py`, same precedent as
-`tests/fake_openai.py`) with RSA-signed test tokens.
+`tests/fake_openai.py`) with RSA-signed test tokens. Live smoke verified
+against real Auth0 (tenant `change-report.us.auth0.com`, audience
+`https://change-report.us.auth0.com/me/`): no-token 401 with Bearer
+challenge, claim-scoped reads, admin upload 201, and the audit row's
+`actor` equal to the token subject. Token minting for smoke tests:
+`auth0 test login --audience <API identifier>` (the CLI's default
+audience is the Management API — always pin yours).
 
 `OPENAI_API_KEY` live and verified end to end; the 6 CUAD fixtures are
 ingested in the dev DB under the eval tenant.
@@ -78,9 +84,10 @@ ruff/mypy clean; 345 integration+unit tests green.
 - First GitHub Actions run unverified (CI is green locally).
 - DELETE has no retention window; audit_log retention APIs still deferred
   (the tenant-scoped read API landed in W5·B, the `actor` column in W5·C).
-- Auth0 provisioning (orgs, role assignment, an Action attaching
-  `https://cci/tenant_id` + `https://cci/role` claims) is an owner task
-  before the W6 deploy; tests use a fake JWKS wire meanwhile.
+- Auth0 provisioning is live for one admin user (domain + API + claims
+  Action attached to Login, verified 2026-09-07). Remaining owner tasks
+  before the W6 deploy: role assignment per user (`app_metadata.role` in
+  Auth0), and the SPA application registration for W6·A login.
 
 ## Next
 
