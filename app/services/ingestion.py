@@ -28,7 +28,7 @@ import app.storage.local as local_storage
 from app.llm.client import OpenAiClient
 from app.models.document import Document, DocumentStatus
 from app.models.ingestion_job import IngestionJob, IngestionJobStatus
-from app.request_context import current_request_id
+from app.request_context import current_actor, current_request_id
 from app.services.chunking import chunk_document
 from app.services.documents import DocumentNotFoundError
 from app.services.parsing import ParsedDocument, parse
@@ -57,7 +57,6 @@ async def enqueue_ingestion(
     *,
     tenant_id: uuid.UUID,
     document_id: uuid.UUID,
-    actor: str | None = None,
 ) -> IngestionJob:
     """Queue ingestion for one document; the worker does parse/chunk/embed.
 
@@ -80,7 +79,7 @@ async def enqueue_ingestion(
         tenant_id=tenant_id,
         request_id=current_request_id(),
         action="ingestion.enqueue",
-        actor=actor,
+        actor=current_actor(),
         resource_type="ingestion_job",
         resource_id=job.id,
         detail={"document_id": str(document_id)},

@@ -25,7 +25,7 @@ from app.llm.client import LlmError, LlmOutputError, OpenAiClient
 from app.models.document import DocumentStatus
 from app.models.extraction_job import ExtractionJob, ExtractionJobStatus
 from app.models.review_item import ReviewItemSource
-from app.request_context import current_request_id
+from app.request_context import current_actor, current_request_id
 from app.services import review_queue
 from app.services.documents import DocumentNotFoundError
 
@@ -190,7 +190,6 @@ async def enqueue_extraction(
     *,
     tenant_id: uuid.UUID,
     document_id: uuid.UUID,
-    actor: str | None = None,
 ) -> ExtractionJob:
     """Queue obligation extraction for one document; the worker does the LLM call.
 
@@ -222,7 +221,7 @@ async def enqueue_extraction(
         tenant_id=tenant_id,
         request_id=current_request_id(),
         action="extraction.enqueue",
-        actor=actor,
+        actor=current_actor(),
         resource_type="extraction_job",
         resource_id=job.id,
         detail={"document_id": str(document_id)},

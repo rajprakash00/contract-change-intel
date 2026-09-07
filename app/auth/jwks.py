@@ -1,8 +1,8 @@
 """JWKS fetching + in-process key cache.
 
 Keys are fetched over httpx (async, no blocking IO) and cached with a TTL;
-an unknown `kid` triggers exactly one refresh so Auth0 key rotation never
-gets stuck behind a warm cache. The transport is injectable for tests
+an unknown `kid` triggers a refresh, rate-limited so a flood of bogus kids
+cannot hammer the issuer's endpoint. The transport is injectable for tests
 (`tests/fake_jwks.py` fakes the wire, mirroring `tests/fake_openai.py`).
 """
 
@@ -10,6 +10,10 @@ import time
 
 import httpx
 import jwt
+
+# How often an unknown kid may force a refresh, regardless of key-cache TTL:
+# fast enough to pick up rotations, slow enough to blunt fetch-amplification.
+_UNKNOWN_KID_REFRESH_SECONDS = 30.0
 
 
 class JwksUnavailableError(Exception):
@@ -40,9 +44,15 @@ class JwksClient:
         """The key for `kid`, or None when the issuer does not know it.
 
         Fetches on first use and after the cache expires; an unknown kid
-        forces one refresh so a freshly rotated key still verifies.
+        forces a refresh (rate-limited) so a freshly rotated key verifies
+        within seconds instead of waiting out the cache.
         """
-        if kid not in self._keys or time.monotonic() - self._fetched_at > self._cache_seconds:
+        expired = time.monotonic() - self._fetched_at > self._cache_seconds
+        unknown_kid_refresh = (
+            kid not in self._keys
+            and time.monotonic() - self._fetched_at > _UNKNOWN_KID_REFRESH_SECONDS
+        )
+        if expired or unknown_kid_refresh:
             await self._fetch()
         return self._keys.get(kid)
 

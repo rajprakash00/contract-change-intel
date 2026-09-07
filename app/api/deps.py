@@ -1,7 +1,6 @@
 """Shared FastAPI dependencies for route modules."""
 
 from collections.abc import AsyncIterator, Callable, Coroutine
-from functools import lru_cache
 from typing import Annotated, Any
 
 from fastapi import Depends, Request
@@ -19,6 +18,7 @@ from app.auth.verifier import (
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.llm.client import OpenAiClient
+from app.request_context import actor_ctx
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
@@ -40,11 +40,23 @@ async def get_llm_client(settings: SettingsDep) -> AsyncIterator[OpenAiClient]:
 LlmClientDep = Annotated[OpenAiClient, Depends(get_llm_client)]
 
 
-@lru_cache
+_jwks_clients: dict[tuple[str, float], JwksClient] = {}
+
+
 def _jwks_client_for(domain: str, cache_seconds: float) -> JwksClient:
     # One client per (domain, cache) for the process lifetime, so the JWKS
     # cache is shared across requests instead of refetched per request.
-    return JwksClient(domain, cache_seconds=cache_seconds)
+    key = (domain, cache_seconds)
+    if key not in _jwks_clients:
+        _jwks_clients[key] = JwksClient(domain, cache_seconds=cache_seconds)
+    return _jwks_clients[key]
+
+
+async def aclose_cached_jwks_clients() -> None:
+    """Release the wires of all cached clients; called from the lifespan."""
+    for client in _jwks_clients.values():
+        await client.aclose()
+    _jwks_clients.clear()
 
 
 def get_jwks_client(settings: SettingsDep) -> JwksClient:
@@ -60,7 +72,10 @@ async def get_principal(request: Request, jwks: JwksClientDep, settings: Setting
     scheme, _, token = request.headers.get("authorization", "").partition(" ")
     if scheme.lower() != "bearer" or not token.strip():
         raise AuthenticationError("missing bearer token")
-    return await verify_token(jwks, settings, token.strip())
+    principal = await verify_token(jwks, settings, token.strip())
+    # Correlates audit rows with the acting principal, like request_id above.
+    actor_ctx.set(principal.subject)
+    return principal
 
 
 PrincipalDep = Annotated[Principal, Depends(get_principal)]

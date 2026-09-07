@@ -17,6 +17,7 @@ import app.api.deps as deps
 import app.db as db
 import app.repositories.review_items as review_items_repo
 from app.auth.jwks import JwksClient
+from app.auth.verifier import ROLE_CLAIM, TENANT_CLAIM
 from app.config import get_settings
 from app.main import app
 from app.models.review_item import ReviewItem, ReviewItemSource, ReviewItemStatus
@@ -104,10 +105,10 @@ async def test_token_signed_by_unknown_key_is_unauthorized(client: AsyncClient) 
         {"sub": None},
         {"exp": None},
         {"iat": None},
-        {"https://cci/tenant_id": None},
-        {"https://cci/role": None},
-        {"https://cci/tenant_id": "not-a-uuid"},
-        {"https://cci/role": "superuser"},
+        {TENANT_CLAIM: None},
+        {ROLE_CLAIM: None},
+        {TENANT_CLAIM: "not-a-uuid"},
+        {ROLE_CLAIM: "superuser"},
     ],
 )
 async def test_token_missing_or_bogus_claims_is_unauthorized(

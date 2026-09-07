@@ -78,6 +78,5 @@ async def post_review_item_disposition(
         item_id=item_id,
         disposition=ReviewItemStatus(request.disposition),
         corrected_values=request.corrected_values,
-        actor=principal.subject,
     )
     return ReviewItemRead.model_validate(item)

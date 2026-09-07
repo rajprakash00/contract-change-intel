@@ -31,8 +31,9 @@ boilerplate this project should not hand-roll.
   tenant. Two roles, three dependency shapes (`PrincipalDep`,
   `AdminPrincipal`, `ReviewerPrincipal`) — no permission matrix.
 - **JWKS keys are cached in-process with a TTL** (`auth_jwks_cache_seconds`,
-  default 600); an unknown `kid` forces exactly one refresh so Auth0 key
-  rotation is picked up without waiting out the cache.
+  default 600); an unknown `kid` forces a refresh, rate-limited to at most
+  one per 30 s, so Auth0 key rotation is picked up quickly without letting
+  a flood of forged kids hammer the issuer's endpoint.
 - **No "auth off" mode.** Missing `AUTH0_DOMAIN`/`AUTH0_AUDIENCE` surfaces
   503 per request (same posture as the missing OpenAI key), never a
   silently open API. `/healthz` stays unauthenticated for probes.

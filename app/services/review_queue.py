@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.repositories.audit_log as audit_repo
 import app.repositories.review_items as review_items_repo
 from app.models.review_item import ReviewItem, ReviewItemSource, ReviewItemStatus
-from app.request_context import current_request_id
+from app.request_context import current_actor, current_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +116,6 @@ async def resolve_review_item(
     item_id: uuid.UUID,
     disposition: ReviewItemStatus,
     corrected_values: dict[str, Any] | None,
-    actor: str | None = None,
 ) -> ReviewItem:
     """Resolve one pending item with a Disposition (approved / edited /
     rejected); `edited` carries corrected values, the others carry none —
@@ -148,7 +147,7 @@ async def resolve_review_item(
         tenant_id=tenant_id,
         request_id=current_request_id(),
         action="review_item.resolve",
-        actor=actor,
+        actor=current_actor(),
         resource_type="review_item",
         resource_id=item_id,
         detail={"disposition": disposition.value, "source": resolved.source.value},

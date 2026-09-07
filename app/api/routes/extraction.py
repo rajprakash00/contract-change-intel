@@ -31,7 +31,7 @@ async def post_document_extraction(
     principal: AdminPrincipal,
 ) -> ExtractionJobRead:
     job = await extraction_service.enqueue_extraction(
-        session, tenant_id=principal.tenant_id, document_id=document_id, actor=principal.subject
+        session, tenant_id=principal.tenant_id, document_id=document_id
     )
     return ExtractionJobRead.model_validate(job)
 

@@ -51,7 +51,6 @@ async def post_documents(
         data_dir=settings.data_dir,
         max_bytes=settings.max_upload_mb * 1024 * 1024,
         amends_document_id=amends_document_id,
-        actor=principal.subject,
     )
     return DocumentRead.model_validate(document)
 
@@ -128,5 +127,4 @@ async def delete_document(
         tenant_id=principal.tenant_id,
         document_id=document_id,
         data_dir=settings.data_dir,
-        actor=principal.subject,
     )

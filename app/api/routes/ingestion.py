@@ -33,7 +33,7 @@ async def post_document_ingestion(
     principal: AdminPrincipal,
 ) -> IngestionJobRead:
     job = await ingestion_service.enqueue_ingestion(
-        session, tenant_id=principal.tenant_id, document_id=document_id, actor=principal.subject
+        session, tenant_id=principal.tenant_id, document_id=document_id
     )
     return IngestionJobRead.model_validate(job)
 

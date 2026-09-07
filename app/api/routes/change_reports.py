@@ -39,7 +39,6 @@ async def post_agreement_change_report(
         tenant_id=principal.tenant_id,
         base_document_id=agreement_id,
         amended_document_id=request.amendment_document_id,
-        actor=principal.subject,
     )
     return ChangeReportJobRead.model_validate(job)
 
