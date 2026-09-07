@@ -53,7 +53,11 @@ class IngestionJobConflictError(Exception):
 
 
 async def enqueue_ingestion(
-    session: AsyncSession, *, tenant_id: uuid.UUID, document_id: uuid.UUID
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    document_id: uuid.UUID,
+    actor: str | None = None,
 ) -> IngestionJob:
     """Queue ingestion for one document; the worker does parse/chunk/embed.
 
@@ -76,6 +80,7 @@ async def enqueue_ingestion(
         tenant_id=tenant_id,
         request_id=current_request_id(),
         action="ingestion.enqueue",
+        actor=actor,
         resource_type="ingestion_job",
         resource_id=job.id,
         detail={"document_id": str(document_id)},

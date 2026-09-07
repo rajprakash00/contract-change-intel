@@ -133,6 +133,7 @@ async def enqueue_change_report(
     tenant_id: uuid.UUID,
     base_document_id: uuid.UUID,
     amended_document_id: uuid.UUID,
+    actor: str | None = None,
 ) -> ChangeReportJob:
     """Queue a change report diffing `base_document_id` against the
     amendment named by `amended_document_id`; the worker does the diff + LLM call.
@@ -194,6 +195,7 @@ async def enqueue_change_report(
         tenant_id=tenant_id,
         request_id=current_request_id(),
         action="change_report.enqueue",
+        actor=actor,
         resource_type="change_report_job",
         resource_id=job.id,
         detail={"base_document_id": str(base.id), "amended_document_id": str(amended.id)},

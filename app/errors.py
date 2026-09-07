@@ -9,6 +9,8 @@ import logging
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
+from app.auth.jwks import JwksUnavailableError
+from app.auth.verifier import AuthenticationError, AuthNotConfiguredError, AuthorizationError
 from app.llm.client import LlmCallError, LlmNotConfiguredError, LlmOutputError
 from app.schemas.change_report import ChangePrerequisiteDetail
 from app.schemas.documents import DocumentConflictDetail
@@ -144,7 +146,36 @@ async def _llm_not_configured(_: Request, exc: LlmNotConfiguredError) -> JSONRes
     return _detail_response(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc))
 
 
+async def _authentication_error(_: Request, exc: AuthenticationError) -> JSONResponse:
+    # 401 with the Bearer challenge so SPA clients (W6·A) can react to it.
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content={"detail": str(exc)},
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+async def _authorization_error(_: Request, exc: AuthorizationError) -> JSONResponse:
+    # Authenticated but not permitted: the role is wrong for this endpoint.
+    return _detail_response(status.HTTP_403_FORBIDDEN, str(exc))
+
+
+async def _auth_not_configured(_: Request, exc: AuthNotConfiguredError) -> JSONResponse:
+    # Missing auth settings is a deployment problem, not a client error: 503,
+    # retryable only after the operator fixes the environment.
+    return _detail_response(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc))
+
+
+async def _jwks_unavailable(_: Request, exc: JwksUnavailableError) -> JSONResponse:
+    # The identity provider could not be reached: upstream is the culprit, 502.
+    return _detail_response(status.HTTP_502_BAD_GATEWAY, str(exc))
+
+
 def register_exception_handlers(app: FastAPI) -> None:
+    app.exception_handler(AuthenticationError)(_authentication_error)
+    app.exception_handler(AuthorizationError)(_authorization_error)
+    app.exception_handler(AuthNotConfiguredError)(_auth_not_configured)
+    app.exception_handler(JwksUnavailableError)(_jwks_unavailable)
     app.exception_handler(MimeNotAllowedError)(_mime_not_allowed)
     app.exception_handler(UploadTooLargeError)(_upload_too_large)
     app.exception_handler(DocumentAlreadyExistsError)(_document_already_exists)

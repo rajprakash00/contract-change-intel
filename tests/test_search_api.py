@@ -26,6 +26,7 @@ from app.models.document_text import DocumentText
 from app.repositories import document_chunks as chunks_repo
 from app.repositories import document_texts as texts_repo
 from app.repositories import documents as documents_repo
+from tests.fake_jwks import bearer
 from tests.fake_openai import fake_embedding_client, make_settings
 
 TENANT = uuid.uuid4()
@@ -96,7 +97,7 @@ def override_llm_with_query_vector(vector: list[float]) -> None:
 
 async def get(path: str, *, params: dict[str, str] | None = None, tenant: uuid.UUID = TENANT):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
-        return await http.get(path, params=params, headers={"X-Tenant-Id": str(tenant)})
+        return await http.get(path, params=params, headers=bearer(tenant))
 
 
 class TestGetSearch:
@@ -131,7 +132,7 @@ class TestGetSearch:
         override_llm_with_query_vector(unit_vector(0))
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
-            response = await http.get("/search", headers={"X-Tenant-Id": str(TENANT)})
+            response = await http.get("/search", headers=bearer(TENANT))
 
         assert response.status_code == 422
 
@@ -142,13 +143,13 @@ class TestGetSearch:
 
         assert response.status_code == 422
 
-    async def test_missing_tenant_header_is_unprocessable(self) -> None:
+    async def test_missing_bearer_token_is_unauthorized(self) -> None:
         override_llm_with_query_vector(unit_vector(0))
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as http:
             response = await http.get("/search", params={"q": "payment"})
 
-        assert response.status_code == 422
+        assert response.status_code == 401
 
     async def test_limit_is_capped_at_fifty(self) -> None:
         override_llm_with_query_vector(unit_vector(0))

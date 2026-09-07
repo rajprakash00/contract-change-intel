@@ -37,6 +37,14 @@ class Settings(BaseSettings):
     review_confidence_threshold_extraction: float = 0.7
     review_confidence_threshold_impact: float = 0.7
 
+    # W5·C auth: OIDC bearer JWTs via Auth0. There is no "auth off" mode —
+    # unconfigured auth surfaces 503 per request (same posture as the missing
+    # OpenAI key), never a silently open API.
+    auth0_domain: str = ""
+    auth0_audience: str = ""
+    # How long fetched JWKS keys stay trusted before a refetch.
+    auth_jwks_cache_seconds: float = 600.0
+
 
 @lru_cache
 def get_settings() -> Settings:

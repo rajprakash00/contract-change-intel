@@ -116,6 +116,7 @@ async def resolve_review_item(
     item_id: uuid.UUID,
     disposition: ReviewItemStatus,
     corrected_values: dict[str, Any] | None,
+    actor: str | None = None,
 ) -> ReviewItem:
     """Resolve one pending item with a Disposition (approved / edited /
     rejected); `edited` carries corrected values, the others carry none —
@@ -147,6 +148,7 @@ async def resolve_review_item(
         tenant_id=tenant_id,
         request_id=current_request_id(),
         action="review_item.resolve",
+        actor=actor,
         resource_type="review_item",
         resource_id=item_id,
         detail={"disposition": disposition.value, "source": resolved.source.value},

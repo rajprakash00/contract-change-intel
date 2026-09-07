@@ -129,6 +129,7 @@ async def upload_document(
     data_dir: str,
     max_bytes: int,
     amends_document_id: uuid.UUID | None = None,
+    actor: str | None = None,
 ) -> Document:
     """Validate, dedupe-check, sniff, store to disk, then persist.
 
@@ -207,6 +208,7 @@ async def upload_document(
         tenant_id=document.tenant_id,
         request_id=current_request_id(),
         action="document.upload",
+        actor=actor,
         resource_type="document",
         resource_id=document.id,
         detail=detail,
@@ -257,7 +259,12 @@ async def resolve_document_file(
 
 
 async def delete_document(
-    session: AsyncSession, *, tenant_id: uuid.UUID, document_id: uuid.UUID, data_dir: str
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    document_id: uuid.UUID,
+    data_dir: str,
+    actor: str | None = None,
 ) -> None:
     """Delete the row, then remove the stored file.
 
@@ -290,6 +297,7 @@ async def delete_document(
         tenant_id=tenant_id,
         request_id=current_request_id(),
         action="document.delete",
+        actor=actor,
         resource_type="document",
         resource_id=document.id,
         detail={"filename": document.filename, "sha256": document.sha256},

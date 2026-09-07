@@ -21,6 +21,7 @@ from app.models.change_report_job import ChangeReportJob
 from app.models.document import Document, DocumentStatus
 from app.models.document_text import DocumentText
 from app.models.extraction_job import ExtractionJob, ExtractionJobStatus
+from tests.fake_jwks import bearer
 
 BASE_TEXT = "2.1 Delivery\n\nLICENSOR shall deliver within 14 days."
 AMENDED_TEXT = "2.1 Delivery\n\nLICENSOR shall deliver within 30 days."
@@ -47,7 +48,7 @@ async def make_document(
     response = await client.post(
         "/documents",
         files={"file": ("agreement.txt", uuid.uuid4().hex.encode(), "text/plain")},
-        headers={"X-Tenant-Id": str(tenant_id)},
+        headers=bearer(tenant_id),
         data={"amends_document_id": amends} if amends else None,
     )
     assert response.status_code == 201
@@ -90,7 +91,7 @@ def body(amendment_id: str) -> dict:
 
 async def test_post_returns_202_queued_job_for_the_named_pair(client: AsyncClient) -> None:
     tenant_id = uuid.uuid4()
-    headers = {"X-Tenant-Id": str(tenant_id)}
+    headers = bearer(tenant_id)
     base, amended = await make_ready_pair(client, tenant_id)
 
     response = await client.post(
@@ -112,7 +113,7 @@ async def test_post_before_prerequisites_is_409_naming_the_first_missing_job(
     # base-ingestion → base-extraction → amendment-ingestion →
     # amendment-extraction order is the base ingestion, never run.
     tenant_id = uuid.uuid4()
-    headers = {"X-Tenant-Id": str(tenant_id)}
+    headers = bearer(tenant_id)
     base = await make_document(client, tenant_id)
     amended = await make_document(client, tenant_id, amends=base["id"])
 
@@ -130,7 +131,7 @@ async def test_post_before_prerequisites_is_409_naming_the_first_missing_job(
 
 async def test_post_with_unlinked_amendment_is_409(client: AsyncClient) -> None:
     tenant_id = uuid.uuid4()
-    headers = {"X-Tenant-Id": str(tenant_id)}
+    headers = bearer(tenant_id)
     base = await make_document(client, tenant_id)
     unrelated = await make_document(client, tenant_id)
 
@@ -145,14 +146,14 @@ async def test_post_unknown_base_is_404(client: AsyncClient) -> None:
     response = await client.post(
         f"/agreements/{uuid.uuid4()}/change-report",
         json=body(str(uuid.uuid4())),
-        headers={"X-Tenant-Id": str(uuid.uuid4())},
+        headers=bearer(uuid.uuid4()),
     )
     assert response.status_code == 404
 
 
 async def test_post_unknown_amendment_is_404(client: AsyncClient) -> None:
     tenant_id = uuid.uuid4()
-    headers = {"X-Tenant-Id": str(tenant_id)}
+    headers = bearer(tenant_id)
     base = await make_document(client, tenant_id)
 
     response = await client.post(
@@ -166,7 +167,7 @@ async def test_post_unknown_amendment_is_404(client: AsyncClient) -> None:
 
 async def test_post_foreign_amendment_is_404(client: AsyncClient) -> None:
     tenant_id = uuid.uuid4()
-    headers = {"X-Tenant-Id": str(tenant_id)}
+    headers = bearer(tenant_id)
     base = await make_document(client, tenant_id)
     foreign = await make_document(client, uuid.uuid4())
 
@@ -179,7 +180,7 @@ async def test_post_foreign_amendment_is_404(client: AsyncClient) -> None:
 
 async def test_get_change_report_job_polls_status(client: AsyncClient) -> None:
     tenant_id = uuid.uuid4()
-    headers = {"X-Tenant-Id": str(tenant_id)}
+    headers = bearer(tenant_id)
     base, amended = await make_ready_pair(client, tenant_id)
     enqueued = await client.post(
         f"/agreements/{base['id']}/change-report", json=body(amended["id"]), headers=headers
@@ -199,34 +200,32 @@ async def test_get_change_report_job_is_tenant_scoped(client: AsyncClient) -> No
     enqueued = await client.post(
         f"/agreements/{base['id']}/change-report",
         json=body(amended["id"]),
-        headers={"X-Tenant-Id": str(tenant_id)},
+        headers=bearer(tenant_id),
     )
     job_id = enqueued.json()["id"]
 
-    stranger = await client.get(
-        f"/change-report-jobs/{job_id}", headers={"X-Tenant-Id": str(uuid.uuid4())}
-    )
+    stranger = await client.get(f"/change-report-jobs/{job_id}", headers=bearer(uuid.uuid4()))
     missing = await client.get(
         f"/change-report-jobs/{uuid.uuid4()}",
-        headers={"X-Tenant-Id": str(tenant_id)},
+        headers=bearer(tenant_id),
     )
 
     assert stranger.status_code == 404
     assert missing.status_code == 404
 
 
-async def test_post_requires_tenant_header(client: AsyncClient) -> None:
+async def test_post_requires_bearer_token(client: AsyncClient) -> None:
     response = await client.post(
         f"/agreements/{uuid.uuid4()}/change-report", json=body(str(uuid.uuid4()))
     )
-    assert response.status_code == 422
+    assert response.status_code == 401
 
 
 async def test_enqueue_writes_an_audit_row_for_the_change_report(client: AsyncClient) -> None:
     from sqlalchemy import select
 
     tenant_id = uuid.uuid4()
-    headers = {"X-Tenant-Id": str(tenant_id)}
+    headers = bearer(tenant_id)
     base, amended = await make_ready_pair(client, tenant_id)
 
     response = await client.post(
