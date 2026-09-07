@@ -7,7 +7,7 @@ the file's history lives in git, not in this file.
 
 ## State
 
-Done through **W4·D impact mapping**: W1 foundations / read paths /
+Done through **W5·C OIDC auth**: W1 foundations / read paths /
 hardening gate · W2 LLM client + extraction job surface · W3 ingestion
 pipeline (parse → chunk → embed), RRF hybrid search, golden records + eval
 harness · W4·A parse-gated extraction (409 until ingestion completes), worker
@@ -50,7 +50,24 @@ limit truncates from the newest end (W5·B in docs/w5-decisions.md) —
 and the deferred W4·D impact eval landed as the `impact_map` golden
 task (one real mapping call per detected Change against the record's
 obligations as candidates; per-Change precision/recall matched on
-(clause_ref, owner) via `evals.metrics.impact_precision_recall`).
+(clause_ref, owner) via `evals.metrics.impact_precision_recall`). · W5·C
+OIDC auth via Auth0 (ADR-008): bearer JWTs verified against Auth0's JWKS
+(RS256, issuer/audience/expiry-strict, in-process key cache with TTL + one
+refresh on unknown kid); claims map to Tenant + Role
+(`https://cci/tenant_id`, `https://cci/role` ∈ admin/reviewer) — the
+`X-Tenant-Id` header is gone, tenant and actor come only from the token;
+document/job mutations are admin-only, review dispositions
+reviewer-or-admin, reads any authenticated principal; `audit_log.actor`
+column landed (token subject; NULL for pre-auth rows); no "auth off" mode
+— unconfigured auth is 503, `/healthz` stays open; tests fake the JWKS
+wire at the transport seam (`tests/fake_jwks.py`, same precedent as
+`tests/fake_openai.py`) with RSA-signed test tokens. Live smoke verified
+against real Auth0 (tenant `change-report.us.auth0.com`, audience
+`https://change-report.us.auth0.com/me/`): no-token 401 with Bearer
+challenge, claim-scoped reads, admin upload 201, and the audit row's
+`actor` equal to the token subject. Token minting for smoke tests:
+`auth0 test login --audience <API identifier>` (the CLI's default
+audience is the Management API — always pin yours).
 
 `OPENAI_API_KEY` live and verified end to end; the 6 CUAD fixtures are
 ingested in the dev DB under the eval tenant.
@@ -59,23 +76,25 @@ Baselines (`evals/baselines/`): retrieve recall@5 0.82 / recall@10 0.96;
 extract precision 0.90 / recall 1.0 / citation_validity 1.0; diff
 precision 1.0 / recall 1.0; impact_map precision 0.83 / recall 0.75
 (first live run, gpt-4o-mini — single-run wobble per the README caveat).
-ruff/mypy clean; 322 integration+unit tests green.
+ruff/mypy clean; 345 integration+unit tests green.
 
 ## Open / blocked
 
 - `ANTHROPIC_API_KEY` (owner) — blocks the Anthropic SDK spike.
 - First GitHub Actions run unverified (CI is green locally).
 - DELETE has no retention window; audit_log retention APIs still deferred
-  (the tenant-scoped read API landed in W5·B). The `audit_log` `actor`
-  column lands with W5·C auth — today's only principal is the tenant.
-- Auth deferred to multi-tenancy work (W5).
+  (the tenant-scoped read API landed in W5·B, the `actor` column in W5·C).
+- Auth0 provisioning is live for one admin user (domain + API + claims
+  Action attached to Login, verified 2026-09-07). Remaining owner tasks
+  before the W6 deploy: role assignment per user (`app_metadata.role` in
+  Auth0), and the SPA application registration for W6·A login.
 
 ## Next
 
-Settled design: `docs/w4-decisions.md` (W4 complete) and `docs/w5-decisions.md`
-(W5·A review queue + W5·B audit trail/impact eval done → W5·C OIDC auth
-via Auth0; then W6·A thin Next.js UI → W6·B AWS ECS/RDS deploy via Terraform →
-deployed API + UI + writeup with eval numbers). Deferred: rate limits, load
+Settled design: `docs/w4-decisions.md` (W4 complete) and
+`docs/w5-decisions.md` (W5 complete through W5·C). The next work is
+**W6·A thin Next.js UI** → **W6·B AWS ECS/RDS deploy via Terraform** →
+deployed API + UI + writeup with eval numbers. Deferred: rate limits, load
 tests, Anthropic spike, retention.
 
 ## Gotchas
@@ -85,3 +104,6 @@ tests, Anthropic spike, retention.
 - Delete-vs-amend race: an amendment inserted between `has_amendments` and
   the delete falls through to the RESTRICT FK and surfaces as a 500; to be
   handled if concurrent-write tests arrive.
+- `get_settings` is lru_cached and auth tests flip `AUTH0_DOMAIN` via env —
+  `tests/conftest.py::auth_env` clears the cache around every test; keep
+  doing so if other env-driven settings grow knobs.

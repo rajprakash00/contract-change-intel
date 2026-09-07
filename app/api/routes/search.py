@@ -11,7 +11,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 
 import app.services.search as search_service
-from app.api.deps import LlmClientDep, SessionDep, TenantId
+from app.api.deps import LlmClientDep, PrincipalDep, SessionDep
 from app.schemas.search import SearchHitRead, SearchResponse
 
 router = APIRouter(tags=["search"])
@@ -26,9 +26,11 @@ _MAX_LIMIT = 50
 async def get_search(
     session: SessionDep,
     llm: LlmClientDep,
-    tenant_id: TenantId,
+    principal: PrincipalDep,
     q: Annotated[str, Query(min_length=1)],
     limit: Annotated[int, Query(ge=1, le=_MAX_LIMIT)] = _DEFAULT_LIMIT,
 ) -> SearchResponse:
-    hits = await search_service.search(session, llm=llm, tenant_id=tenant_id, query=q, limit=limit)
+    hits = await search_service.search(
+        session, llm=llm, tenant_id=principal.tenant_id, query=q, limit=limit
+    )
     return SearchResponse(items=[SearchHitRead.model_validate(hit) for hit in hits])

@@ -45,7 +45,9 @@ docker compose run --rm app alembic upgrade head
 ## Configuration
 
 Environment variables (see `.env.example`): `DATABASE_URL`, `DATA_DIR`,
-`MAX_UPLOAD_MB`.
+`MAX_UPLOAD_MB`, plus the auth pair `AUTH0_DOMAIN` + `AUTH0_AUDIENCE`
+(bearer JWTs via Auth0 are mandatory; unconfigured auth means 503, not an
+open API).
 
 ## Database schema
 

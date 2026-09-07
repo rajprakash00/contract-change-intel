@@ -17,6 +17,7 @@ import app.db as db
 from app.models.audit_log import AuditLog
 from app.models.document import Document
 from app.models.review_item import ReviewItem, ReviewItemSource, ReviewItemStatus
+from tests.fake_jwks import bearer
 
 
 @pytest.fixture(autouse=True)
@@ -73,11 +74,11 @@ async def seed(items: list[ReviewItem]) -> None:
 
 
 async def get(client: AsyncClient, path: str, tenant_id: uuid.UUID) -> Response:
-    return await client.get(path, headers={"X-Tenant-Id": str(tenant_id)})
+    return await client.get(path, headers=bearer(tenant_id))
 
 
 async def post(client: AsyncClient, path: str, tenant_id: uuid.UUID, body: dict) -> Response:
-    return await client.post(path, json=body, headers={"X-Tenant-Id": str(tenant_id)})
+    return await client.post(path, json=body, headers=bearer(tenant_id))
 
 
 class TestListReviewItems:

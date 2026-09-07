@@ -11,7 +11,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 
 import app.services.review_queue as review_service
-from app.api.deps import SessionDep, TenantId
+from app.api.deps import PrincipalDep, ReviewerPrincipal, SessionDep
 from app.models.review_item import ReviewItemStatus
 from app.schemas.reviews import (
     ReviewDispositionCreate,
@@ -32,14 +32,14 @@ _CONFLICT_RESPONSE: dict[int | str, dict[str, str]] = {
 @router.get("/review-items", response_model=ReviewItemsResponse)
 async def get_review_items(
     session: SessionDep,
-    tenant_id: TenantId,
+    principal: PrincipalDep,
     review_status: Annotated[
         str | None, Query(alias="status", pattern="^(pending|approved|edited|rejected)$")
     ] = None,
 ) -> ReviewItemsResponse:
     items = await review_service.list_review_items(
         session,
-        tenant_id=tenant_id,
+        tenant_id=principal.tenant_id,
         status=ReviewItemStatus(review_status) if review_status else None,
     )
     return ReviewItemsResponse(items=[ReviewItemRead.model_validate(item) for item in items])
@@ -53,9 +53,11 @@ async def get_review_items(
 async def get_review_item(
     session: SessionDep,
     item_id: uuid.UUID,
-    tenant_id: TenantId,
+    principal: PrincipalDep,
 ) -> ReviewItemRead:
-    item = await review_service.get_review_item(session, tenant_id=tenant_id, item_id=item_id)
+    item = await review_service.get_review_item(
+        session, tenant_id=principal.tenant_id, item_id=item_id
+    )
     return ReviewItemRead.model_validate(item)
 
 
@@ -68,11 +70,11 @@ async def post_review_item_disposition(
     session: SessionDep,
     item_id: uuid.UUID,
     request: ReviewDispositionCreate,
-    tenant_id: TenantId,
+    principal: ReviewerPrincipal,
 ) -> ReviewItemRead:
     item = await review_service.resolve_review_item(
         session,
-        tenant_id=tenant_id,
+        tenant_id=principal.tenant_id,
         item_id=item_id,
         disposition=ReviewItemStatus(request.disposition),
         corrected_values=request.corrected_values,

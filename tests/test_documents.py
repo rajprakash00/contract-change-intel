@@ -19,6 +19,7 @@ from sqlalchemy import delete, func, select
 import app.db as db
 from app.config import get_settings
 from app.models.document import Document
+from tests.fake_jwks import bearer
 
 PDF_MIME = "application/pdf"
 TEXT_MIME = "text/plain"
@@ -57,7 +58,7 @@ async def upload(
     return await client.post(
         "/documents",
         files={"file": (filename, content, mime)},
-        headers={"X-Tenant-Id": str(uuid.uuid4())},
+        headers=bearer(uuid.uuid4()),
     )
 
 
@@ -76,7 +77,7 @@ async def test_upload_happy_path(client: AsyncClient, tmp_path: Path) -> None:
     response = await client.post(
         "/documents",
         files={"file": ("msa.txt", content, TEXT_MIME)},
-        headers={"X-Tenant-Id": str(tenant_id)},
+        headers=bearer(tenant_id),
     )
 
     assert response.status_code == 201
@@ -102,7 +103,7 @@ async def test_upload_happy_path(client: AsyncClient, tmp_path: Path) -> None:
 async def test_duplicate_content_same_tenant_conflict(client: AsyncClient) -> None:
     tenant_id = uuid.uuid4()
     content = b"amendment one"
-    headers = {"X-Tenant-Id": str(tenant_id)}
+    headers = bearer(tenant_id)
 
     first = await client.post(
         "/documents",
@@ -129,7 +130,7 @@ async def test_invalid_mime_rejected(client: AsyncClient) -> None:
     response = await client.post(
         "/documents",
         files={"file": ("x.exe", b"MZ...", "application/x-msdownload")},
-        headers={"X-Tenant-Id": str(uuid.uuid4())},
+        headers=bearer(uuid.uuid4()),
     )
 
     assert response.status_code == 415
@@ -137,9 +138,9 @@ async def test_invalid_mime_rejected(client: AsyncClient) -> None:
     assert await document_count() == 0
 
 
-async def test_missing_tenant_header_rejected(client: AsyncClient) -> None:
+async def test_missing_bearer_token_rejected(client: AsyncClient) -> None:
     response = await client.post("/documents", files={"file": ("a.txt", b"x", TEXT_MIME)})
-    assert response.status_code == 422
+    assert response.status_code == 401
     assert await document_count() == 0
 
 
@@ -149,14 +150,14 @@ async def test_pdf_allowed(client: AsyncClient) -> None:
 
 
 async def test_list_empty_tenant(client: AsyncClient) -> None:
-    response = await client.get("/documents", headers={"X-Tenant-Id": str(uuid.uuid4())})
+    response = await client.get("/documents", headers=bearer(uuid.uuid4()))
     assert response.status_code == 200
     assert response.json() == {"items": [], "total": 0, "limit": 50, "offset": 0}
 
 
 async def test_list_newest_first_and_tenant_isolated(client: AsyncClient) -> None:
     tenant_id = uuid.uuid4()
-    headers = {"X-Tenant-Id": str(tenant_id)}
+    headers = bearer(tenant_id)
     first = await client.post(
         "/documents", files={"file": ("a.txt", b"first", TEXT_MIME)}, headers=headers
     )
@@ -176,7 +177,7 @@ async def test_list_newest_first_and_tenant_isolated(client: AsyncClient) -> Non
 
 
 async def test_list_pagination_window(client: AsyncClient) -> None:
-    headers = {"X-Tenant-Id": str(uuid.uuid4())}
+    headers = bearer(uuid.uuid4())
     ids = [
         (
             await client.post(
@@ -197,7 +198,7 @@ async def test_list_pagination_window(client: AsyncClient) -> None:
 
 
 async def test_list_rejects_out_of_range_pagination(client: AsyncClient) -> None:
-    headers = {"X-Tenant-Id": str(uuid.uuid4())}
+    headers = bearer(uuid.uuid4())
     zero_limit = await client.get("/documents", params={"limit": 0}, headers=headers)
     huge_limit = await client.get("/documents", params={"limit": 101}, headers=headers)
     negative_offset = await client.get("/documents", params={"offset": -1}, headers=headers)
@@ -208,7 +209,7 @@ async def test_list_rejects_out_of_range_pagination(client: AsyncClient) -> None
 
 async def test_get_document_by_id_scoped_to_tenant(client: AsyncClient) -> None:
     tenant_id = uuid.uuid4()
-    headers = {"X-Tenant-Id": str(tenant_id)}
+    headers = bearer(tenant_id)
     created = await client.post(
         "/documents", files={"file": ("get.txt", b"get me", TEXT_MIME)}, headers=headers
     )
@@ -220,9 +221,7 @@ async def test_get_document_by_id_scoped_to_tenant(client: AsyncClient) -> None:
     assert found.json()["id"] == document_id
     assert found.json()["sha256"] == hashlib.sha256(b"get me").hexdigest()
 
-    stranger = await client.get(
-        f"/documents/{document_id}", headers={"X-Tenant-Id": str(uuid.uuid4())}
-    )
+    stranger = await client.get(f"/documents/{document_id}", headers=bearer(uuid.uuid4()))
     assert stranger.status_code == 404
 
     missing = await client.get(f"/documents/{uuid.uuid4()}", headers=headers)
@@ -232,7 +231,7 @@ async def test_get_document_by_id_scoped_to_tenant(client: AsyncClient) -> None:
 
 async def test_download_returns_stored_bytes(client: AsyncClient) -> None:
     tenant_id = uuid.uuid4()
-    headers = {"X-Tenant-Id": str(tenant_id)}
+    headers = bearer(tenant_id)
     content = b"%PDF-1.7 amendment bytes"
     created = await client.post(
         "/documents", files={"file": ("msa.pdf", content, PDF_MIME)}, headers=headers
@@ -246,7 +245,7 @@ async def test_download_returns_stored_bytes(client: AsyncClient) -> None:
 
     stranger = await client.get(
         f"/documents/{created.json()['id']}/content",
-        headers={"X-Tenant-Id": str(uuid.uuid4())},
+        headers=bearer(uuid.uuid4()),
     )
     assert stranger.status_code == 404
 
@@ -255,7 +254,7 @@ async def test_delete_removes_row_file_and_is_repeat_safe(
     client: AsyncClient, tmp_path: Path
 ) -> None:
     tenant_id = uuid.uuid4()
-    headers = {"X-Tenant-Id": str(tenant_id)}
+    headers = bearer(tenant_id)
     content = b"delete me"
     created = await client.post(
         "/documents", files={"file": ("gone.txt", content, TEXT_MIME)}, headers=headers
@@ -277,7 +276,7 @@ async def test_declared_type_must_match_actual_bytes(client: AsyncClient) -> Non
     response = await client.post(
         "/documents",
         files={"file": ("fake.txt", b"%PDF-1.7 not really text", TEXT_MIME)},
-        headers={"X-Tenant-Id": str(uuid.uuid4())},
+        headers=bearer(uuid.uuid4()),
     )
     assert response.status_code == 415
     assert "content identified as application/pdf" in response.json()["detail"]
@@ -294,7 +293,7 @@ async def test_upload_with_amends_document_id_links_amendment_to_parent(
     client: AsyncClient,
 ) -> None:
     tenant_id = uuid.uuid4()
-    headers = {"X-Tenant-Id": str(tenant_id)}
+    headers = bearer(tenant_id)
     parent = await client.post(
         "/documents", files={"file": ("msa.txt", b"msa v1", TEXT_MIME)}, headers=headers
     )
@@ -329,7 +328,7 @@ async def test_amendment_rejects_unknown_parent_with_404(client: AsyncClient) ->
         "/documents",
         files={"file": ("a.txt", b"orphan amendment", TEXT_MIME)},
         data={"amends_document_id": str(uuid.uuid4())},
-        headers={"X-Tenant-Id": str(uuid.uuid4())},
+        headers=bearer(uuid.uuid4()),
     )
     assert response.status_code == 404
     assert await document_count() == 0
@@ -343,7 +342,7 @@ async def test_amendment_rejects_parent_from_other_tenant_with_404(
         "/documents",
         files={"file": ("a.txt", b"amendment bytes", TEXT_MIME)},
         data={"amends_document_id": parent.json()["id"]},
-        headers={"X-Tenant-Id": str(uuid.uuid4())},
+        headers=bearer(uuid.uuid4()),
     )
     assert response.status_code == 404
     assert await document_count() == 1
@@ -353,7 +352,7 @@ async def test_amendment_with_duplicate_bytes_conflicts_even_when_parent_named(
     client: AsyncClient,
 ) -> None:
     tenant_id = uuid.uuid4()
-    headers = {"X-Tenant-Id": str(tenant_id)}
+    headers = bearer(tenant_id)
     content = b"msa v1"
     parent = await client.post(
         "/documents", files={"file": ("msa.txt", content, TEXT_MIME)}, headers=headers
@@ -372,7 +371,7 @@ async def test_delete_document_with_amendments_conflicts_until_amendments_remove
     client: AsyncClient,
 ) -> None:
     tenant_id = uuid.uuid4()
-    headers = {"X-Tenant-Id": str(tenant_id)}
+    headers = bearer(tenant_id)
     parent = await client.post(
         "/documents", files={"file": ("msa.txt", b"msa v1", TEXT_MIME)}, headers=headers
     )

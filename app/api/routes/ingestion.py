@@ -11,7 +11,7 @@ import uuid
 from fastapi import APIRouter, status
 
 import app.services.ingestion as ingestion_service
-from app.api.deps import SessionDep, TenantId
+from app.api.deps import AdminPrincipal, PrincipalDep, SessionDep
 from app.schemas.ingestion import IngestionJobRead
 
 router = APIRouter(tags=["ingestion"])
@@ -30,10 +30,10 @@ _NOT_FOUND_RESPONSE: dict[int | str, dict[str, str]] = {
 async def post_document_ingestion(
     session: SessionDep,
     document_id: uuid.UUID,
-    tenant_id: TenantId,
+    principal: AdminPrincipal,
 ) -> IngestionJobRead:
     job = await ingestion_service.enqueue_ingestion(
-        session, tenant_id=tenant_id, document_id=document_id
+        session, tenant_id=principal.tenant_id, document_id=document_id
     )
     return IngestionJobRead.model_validate(job)
 
@@ -46,7 +46,9 @@ async def post_document_ingestion(
 async def get_ingestion_job(
     session: SessionDep,
     job_id: uuid.UUID,
-    tenant_id: TenantId,
+    principal: PrincipalDep,
 ) -> IngestionJobRead:
-    job = await ingestion_service.get_ingestion_job(session, tenant_id=tenant_id, job_id=job_id)
+    job = await ingestion_service.get_ingestion_job(
+        session, tenant_id=principal.tenant_id, job_id=job_id
+    )
     return IngestionJobRead.model_validate(job)

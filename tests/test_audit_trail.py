@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 import app.db as db
 from app.models.audit_log import AuditLog
+from tests.fake_jwks import bearer
 
 TEXT_MIME = "text/plain"
 
@@ -27,7 +28,7 @@ async def test_upload_writes_audit_row_correlated_to_request_id(client: AsyncCli
     response = await client.post(
         "/documents",
         files={"file": ("a.txt", b"audited upload", TEXT_MIME)},
-        headers={"X-Tenant-Id": str(tenant_id)},
+        headers=bearer(tenant_id),
     )
     assert response.status_code == 201
 
@@ -43,7 +44,7 @@ async def test_upload_writes_audit_row_correlated_to_request_id(client: AsyncCli
 
 async def test_delete_appends_audit_row_after_upload_row(client: AsyncClient) -> None:
     tenant_id = uuid.uuid4()
-    headers = {"X-Tenant-Id": str(tenant_id)}
+    headers = bearer(tenant_id)
     created = await client.post(
         "/documents",
         files={"file": ("b.txt", b"delete is audited too", TEXT_MIME)},
@@ -64,7 +65,7 @@ async def test_rejected_upload_leaves_no_audit_row(client: AsyncClient) -> None:
     response = await client.post(
         "/documents",
         files={"file": ("x.exe", b"MZ...", "application/x-msdownload")},
-        headers={"X-Tenant-Id": str(tenant_id)},
+        headers=bearer(tenant_id),
     )
     assert response.status_code == 415
     assert await tenant_rows(tenant_id) == []
@@ -76,7 +77,7 @@ async def test_audit_log_read_lists_tenant_rows_chronologically(
     """The read surface mirrors what was written: the tenant's audit rows,
     oldest first, with the correlation and target fields intact."""
     tenant_id = uuid.uuid4()
-    headers = {"X-Tenant-Id": str(tenant_id)}
+    headers = bearer(tenant_id)
     upload_id = (
         await client.post(
             "/documents",
@@ -106,10 +107,10 @@ async def test_audit_log_read_is_tenant_scoped(client: AsyncClient) -> None:
     await client.post(
         "/documents",
         files={"file": ("d.txt", b"scoped read", TEXT_MIME)},
-        headers={"X-Tenant-Id": str(theirs)},
+        headers=bearer(theirs),
     )
 
-    response = await client.get("/audit-log", headers={"X-Tenant-Id": str(mine)})
+    response = await client.get("/audit-log", headers=bearer(mine))
 
     assert response.status_code == 200
     assert response.json()["items"] == []
@@ -117,7 +118,7 @@ async def test_audit_log_read_is_tenant_scoped(client: AsyncClient) -> None:
 
 async def test_audit_log_read_filters_by_action(client: AsyncClient) -> None:
     tenant_id = uuid.uuid4()
-    headers = {"X-Tenant-Id": str(tenant_id)}
+    headers = bearer(tenant_id)
     created = await client.post(
         "/documents",
         files={"file": ("e.txt", b"filter test", TEXT_MIME)},
@@ -135,7 +136,7 @@ async def test_audit_log_read_limit_caps_the_rows(client: AsyncClient) -> None:
     """Limit truncates from the oldest end: with more rows than the cap, the
     newest never displace the earliest events from the trail."""
     tenant_id = uuid.uuid4()
-    headers = {"X-Tenant-Id": str(tenant_id)}
+    headers = bearer(tenant_id)
     for name in ("f.txt", "g.txt", "h.txt"):
         await client.post(
             "/documents",

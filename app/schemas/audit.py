@@ -10,6 +10,7 @@ class AuditEntryRead(BaseModel):
 
     id: uuid.UUID
     tenant_id: uuid.UUID
+    actor: str | None
     request_id: str
     action: str
     resource_type: str

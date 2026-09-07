@@ -18,10 +18,12 @@ async def record(
     resource_type: str,
     resource_id: uuid.UUID | None = None,
     detail: dict[str, Any] | None = None,
+    actor: str | None = None,
 ) -> None:
     session.add(
         AuditLog(
             tenant_id=tenant_id,
+            actor=actor,
             request_id=request_id,
             action=action,
             resource_type=resource_type,

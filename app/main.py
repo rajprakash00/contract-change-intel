@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 import app.api.routes.change_reports as change_reports
 import app.db as db
+from app.api.deps import aclose_cached_jwks_clients
 from app.api.routes import audit, documents, extraction, health, ingestion, reviews, search
 from app.config import get_settings
 from app.errors import register_exception_handlers
@@ -24,6 +25,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
     logger.info("api shutting down; disposing database engine")
     await db.dispose_engine()
+    await aclose_cached_jwks_clients()
 
 
 def create_app() -> FastAPI:

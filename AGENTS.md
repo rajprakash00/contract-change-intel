@@ -46,6 +46,7 @@ and `llm`.
 | `app/repositories/` | DB calls only, plain functions, one module per table, no generic base classes. |
 | `app/storage/`   | Byte persistence only; content-addressed `{data_dir}/{tenant_id}/{sha256}`. |
 | `app/llm/`       | LLM provider access; the only layer that imports an LLM SDK (`app/llm/client.py`). Converts SDK failures into `LlmError`s; logs token usage + cost per call (`app/llm/cost.py` is pure math). |
+| `app/auth/`      | Identity provider access; the only JWT/JWKS machinery (`app/auth/verifier.py`, `jwks.py`). Converts wire/claim failures into `AuthenticationError`/`AuthorizationError`; the acting subject lands in `request_context.actor_ctx`. |
 | `app/models/`    | SQLAlchemy 2.0 `Mapped` style. |
 | `app/schemas/`   | Pydantic v2; `from_attributes` to validate straight off ORM rows. |
 

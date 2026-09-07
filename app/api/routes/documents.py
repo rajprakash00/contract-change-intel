@@ -11,7 +11,7 @@ from fastapi import APIRouter, Form, Query, UploadFile, status
 from fastapi.responses import FileResponse
 
 import app.services.documents as documents_service
-from app.api.deps import SessionDep, SettingsDep, TenantId
+from app.api.deps import AdminPrincipal, PrincipalDep, SessionDep, SettingsDep
 from app.schemas.documents import DocumentConflictDetail, DocumentListPage, DocumentRead
 
 router = APIRouter(tags=["documents"])
@@ -39,12 +39,12 @@ async def post_documents(
     session: SessionDep,
     settings: SettingsDep,
     file: UploadFile,
-    tenant_id: TenantId,
+    principal: AdminPrincipal,
     amends_document_id: Annotated[uuid.UUID | None, Form()] = None,
 ) -> DocumentRead:
     document = await documents_service.upload_document(
         session,
-        tenant_id=tenant_id,
+        tenant_id=principal.tenant_id,
         filename=file.filename,
         content_type=file.content_type,
         read=file.read,
@@ -58,14 +58,14 @@ async def post_documents(
 @router.get("/documents", response_model=DocumentListPage)
 async def get_documents(
     session: SessionDep,
-    tenant_id: TenantId,
+    principal: PrincipalDep,
     limit: Annotated[int, Query(ge=1, le=documents_service.MAX_LIST_LIMIT)] = (
         documents_service.DEFAULT_LIST_LIMIT
     ),
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> DocumentListPage:
     items, total = await documents_service.list_documents(
-        session, tenant_id=tenant_id, limit=limit, offset=offset
+        session, tenant_id=principal.tenant_id, limit=limit, offset=offset
     )
     return DocumentListPage(
         items=[DocumentRead.model_validate(item) for item in items],
@@ -83,10 +83,10 @@ async def get_documents(
 async def get_document(
     session: SessionDep,
     document_id: uuid.UUID,
-    tenant_id: TenantId,
+    principal: PrincipalDep,
 ) -> DocumentRead:
     document = await documents_service.get_document(
-        session, tenant_id=tenant_id, document_id=document_id
+        session, tenant_id=principal.tenant_id, document_id=document_id
     )
     return DocumentRead.model_validate(document)
 
@@ -99,11 +99,11 @@ async def get_document(
 async def get_document_content(
     session: SessionDep,
     document_id: uuid.UUID,
-    tenant_id: TenantId,
+    principal: PrincipalDep,
     settings: SettingsDep,
 ) -> FileResponse:
     document, path = await documents_service.resolve_document_file(
-        session, tenant_id=tenant_id, document_id=document_id, data_dir=settings.data_dir
+        session, tenant_id=principal.tenant_id, document_id=document_id, data_dir=settings.data_dir
     )
     return FileResponse(path=str(path), media_type=document.mime_type, filename=document.filename)
 
@@ -119,9 +119,12 @@ async def get_document_content(
 async def delete_document(
     session: SessionDep,
     document_id: uuid.UUID,
-    tenant_id: TenantId,
+    principal: AdminPrincipal,
     settings: SettingsDep,
 ) -> None:
     await documents_service.delete_document(
-        session, tenant_id=tenant_id, document_id=document_id, data_dir=settings.data_dir
+        session,
+        tenant_id=principal.tenant_id,
+        document_id=document_id,
+        data_dir=settings.data_dir,
     )

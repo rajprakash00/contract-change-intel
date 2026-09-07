@@ -36,7 +36,7 @@ from app.models.change_report_job import ChangeReportJob, ChangeReportJobStatus
 from app.models.document import DocumentStatus
 from app.models.extraction_job import ExtractionJobStatus
 from app.models.review_item import ReviewItemSource
-from app.request_context import current_request_id
+from app.request_context import current_actor, current_request_id
 from app.services import review_queue
 from app.services.diffing import Change, Span, detect_changes
 from app.services.documents import DocumentNotFoundError
@@ -194,6 +194,7 @@ async def enqueue_change_report(
         tenant_id=tenant_id,
         request_id=current_request_id(),
         action="change_report.enqueue",
+        actor=current_actor(),
         resource_type="change_report_job",
         resource_id=job.id,
         detail={"base_document_id": str(base.id), "amended_document_id": str(amended.id)},

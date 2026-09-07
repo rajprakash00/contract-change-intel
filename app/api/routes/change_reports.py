@@ -12,7 +12,7 @@ import uuid
 from fastapi import APIRouter, status
 
 import app.services.change_report as change_report_service
-from app.api.deps import SessionDep, TenantId
+from app.api.deps import AdminPrincipal, PrincipalDep, SessionDep
 from app.schemas.change_report import ChangeReportCreate, ChangeReportJobRead
 
 router = APIRouter(tags=["change-reports"])
@@ -32,11 +32,11 @@ async def post_agreement_change_report(
     session: SessionDep,
     agreement_id: uuid.UUID,
     request: ChangeReportCreate,
-    tenant_id: TenantId,
+    principal: AdminPrincipal,
 ) -> ChangeReportJobRead:
     job = await change_report_service.enqueue_change_report(
         session,
-        tenant_id=tenant_id,
+        tenant_id=principal.tenant_id,
         base_document_id=agreement_id,
         amended_document_id=request.amendment_document_id,
     )
@@ -51,9 +51,9 @@ async def post_agreement_change_report(
 async def get_change_report_job(
     session: SessionDep,
     job_id: uuid.UUID,
-    tenant_id: TenantId,
+    principal: PrincipalDep,
 ) -> ChangeReportJobRead:
     job = await change_report_service.get_change_report_job(
-        session, tenant_id=tenant_id, job_id=job_id
+        session, tenant_id=principal.tenant_id, job_id=job_id
     )
     return ChangeReportJobRead.model_validate(job)

@@ -9,7 +9,7 @@ import uuid
 from fastapi import APIRouter, status
 
 import app.services.extraction as extraction_service
-from app.api.deps import SessionDep, TenantId
+from app.api.deps import AdminPrincipal, PrincipalDep, SessionDep
 from app.schemas.extraction import ExtractionJobRead
 
 router = APIRouter(tags=["extraction"])
@@ -28,10 +28,10 @@ _NOT_FOUND_RESPONSE: dict[int | str, dict[str, str]] = {
 async def post_document_extraction(
     session: SessionDep,
     document_id: uuid.UUID,
-    tenant_id: TenantId,
+    principal: AdminPrincipal,
 ) -> ExtractionJobRead:
     job = await extraction_service.enqueue_extraction(
-        session, tenant_id=tenant_id, document_id=document_id
+        session, tenant_id=principal.tenant_id, document_id=document_id
     )
     return ExtractionJobRead.model_validate(job)
 
@@ -44,7 +44,9 @@ async def post_document_extraction(
 async def get_extraction_job(
     session: SessionDep,
     job_id: uuid.UUID,
-    tenant_id: TenantId,
+    principal: PrincipalDep,
 ) -> ExtractionJobRead:
-    job = await extraction_service.get_extraction_job(session, tenant_id=tenant_id, job_id=job_id)
+    job = await extraction_service.get_extraction_job(
+        session, tenant_id=principal.tenant_id, job_id=job_id
+    )
     return ExtractionJobRead.model_validate(job)
