@@ -87,7 +87,10 @@ ruff/mypy clean; 345 integration+unit tests green.
 - Auth0 provisioning is live for one admin user (domain + API + claims
   Action attached to Login, verified 2026-09-07). Remaining owner tasks
   before the W6 deploy: role assignment per user (`app_metadata.role` in
-  Auth0), and the SPA application registration for W6·A login.
+  Auth0), and the SPA application registration for W6·A login (allowed
+  callback/logout URLs + web origins `http://localhost:3000` — callback route
+  `/callback` per SDK convention — prod values added when the W6·B domain
+  exists).
 
 ## Next
 
