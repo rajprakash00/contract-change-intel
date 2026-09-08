@@ -29,7 +29,11 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="contract-change-intel", lifespan=lifespan)
+    app = FastAPI(
+        title="contract-change-intel",
+        lifespan=lifespan,
+        root_path=get_settings().root_path,
+    )
     app.add_middleware(RequestIDMiddleware)
     app.include_router(health.router)
     app.include_router(documents.router)

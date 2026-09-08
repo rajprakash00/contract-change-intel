@@ -2,8 +2,9 @@
 
 Current state + next tasks only. AGENTS.md owns commands and constraints,
 CONTEXT.md the language, `docs/decisions/` the ADRs, `docs/w4-decisions.md`
-the settled W4 design. When a block lands, compress it to a line here —
-the file's history lives in git, not in this file.
+the settled W4 design, `docs/w5-decisions.md` the settled W5 design,
+`docs/w6-decisions.md` the settled W6·A UI design. When a block lands, compress
+it to a line here — the file's history lives in git, not in this file.
 
 ## State
 
@@ -67,7 +68,24 @@ against real Auth0 (tenant `change-report.us.auth0.com`, audience
 challenge, claim-scoped reads, admin upload 201, and the audit row's
 `actor` equal to the token subject. Token minting for smoke tests:
 `auth0 test login --audience <API identifier>` (the CLI's default
-audience is the Management API — always pin yours).
+audience is the Management API — always pin yours). · W6·A thin Next.js UI
+(`web/`, docs/w6-decisions.md): Auth0 SPA login via `@auth0/auth0-react`
+(PKCE, `/callback`, bearer attached per request), same-origin `/api/...`
+everywhere — dev proxy is a Next rewrite (`/api/:path*` → API, prefix
+stripped), prod is ALB path-routing, and the API prefix lives in exactly
+one place (`Settings.root_path` → FastAPI `root_path`, empty in dev).
+shadcn/ui + Tailwind with a "calm legal-tech" token layer (serif display
+headings, ink-blue accent). Surfaces: documents table + upload (file +
+amends parent select; upload/delete admin-only, gated client-side off the
+decoded `https://cci/role` claim), document detail with ingestion/extraction
+enqueue + job polling (5s while queued/running, stops when settled),
+change-report view (kind/severity/description per Change, per-Impact
+obligations with Confidence), review-queue triage (status filter,
+approve/reject, edit via corrected-values JSON dialog). react-query for
+server state, react-table v8 for the two tables, RHF+zod for the upload
+form, sonner toasts. Pure-logic unit tests (vitest): role-claim mapping and
+the job-settled/poll predicate; npm lint/tsc/build green; proxy verified
+through the running stack.
 
 `OPENAI_API_KEY` live and verified end to end; the 6 CUAD fixtures are
 ingested in the dev DB under the eval tenant.
@@ -94,11 +112,12 @@ ruff/mypy clean; 345 integration+unit tests green.
 
 ## Next
 
-Settled design: `docs/w4-decisions.md` (W4 complete) and
-`docs/w5-decisions.md` (W5 complete through W5·C). The next work is
-**W6·A thin Next.js UI** → **W6·B AWS ECS/RDS deploy via Terraform** →
-deployed API + UI + writeup with eval numbers. Deferred: rate limits, load
-tests, Anthropic spike, retention.
+The next work is **W6·B AWS ECS/RDS deploy via Terraform** → deployed
+API + UI + writeup with eval numbers. UI-side owner prerequisite for a
+real login: the Auth0 SPA application registration (allowed callback/
+logout URLs + web origins `http://localhost:3000`, callback route
+`/callback`). Deferred: rate limits, load tests, Anthropic spike,
+retention.
 
 ## Gotchas
 
