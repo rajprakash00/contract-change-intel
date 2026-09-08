@@ -14,6 +14,12 @@ class Settings(BaseSettings):
 
     log_level: str = "INFO"
 
+    # Same-origin serving: the browser always says /api/...; the prefix is
+    # stripped once here (dev: empty — Next rewrites proxy the bare API; prod:
+    # /api — ALB path-routes without a rewrite layer). Never set per route.
+    # docs/w6-decisions.md #6.
+    root_path: str = ""
+
     # Root directory for uploaded files; files land at {data_dir}/{tenant_id}/{sha256}.
     data_dir: str = "./data"
     max_upload_mb: int = 50
