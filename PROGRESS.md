@@ -102,22 +102,21 @@ ruff/mypy clean; 345 integration+unit tests green.
 - First GitHub Actions run unverified (CI is green locally).
 - DELETE has no retention window; audit_log retention APIs still deferred
   (the tenant-scoped read API landed in W5·B, the `actor` column in W5·C).
-- Auth0 provisioning is live for one admin user (domain + API + claims
-  Action attached to Login, verified 2026-09-07). Remaining owner tasks
-  before the W6 deploy: role assignment per user (`app_metadata.role` in
-  Auth0), and the SPA application registration for W6·A login (allowed
-  callback/logout URLs + web origins `http://localhost:3000` — callback route
-  `/callback` per SDK convention — prod values added when the W6·B domain
-  exists).
+- Auth0 provisioning complete: domain + API + claims Action attached to
+  Login (verified 2026-09-07), SPA application registered for W6·A login
+  (callback `http://localhost:3000/callback`, web origin + logout URL
+  `http://localhost:3000`), and per-user `app_metadata.role` assigned
+  (one admin, one reviewer; verified 2026-09-08, live SPA logins seen).
+  Remaining: prod callback/logout URL values, added when the W6·B domain
+  exists.
 
 ## Next
 
 The next work is **W6·B AWS ECS/RDS deploy via Terraform** → deployed
-API + UI + writeup with eval numbers. UI-side owner prerequisite for a
-real login: the Auth0 SPA application registration (allowed callback/
-logout URLs + web origins `http://localhost:3000`, callback route
-`/callback`). Deferred: rate limits, load tests, Anthropic spike,
-retention.
+API + UI + writeup with eval numbers. Owner prerequisite for the deploy:
+add prod callback/logout URL values to the Auth0 SPA application once
+the W6·B domain exists. Deferred: rate limits, load tests, Anthropic
+spike, retention.
 
 ## Gotchas
 
