@@ -1,0 +1,137 @@
+name: deploy
+
+# W6·B delivery (docs/w6b-decisions.md #8, #9): GitHub Actions assumes an AWS
+# role via OIDC — no long-lived keys in repo secrets — builds/pushes both
+# images to ECR, runs migrations as a one-off ECS run-task, then rolls the
+# services. Dispatch-only: deploys are deliberate (decision #11's
+# idle-at-zero lifecycle), not on every push.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write # OIDC federation to AWS
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false # never cancel mid-rollout
+
+env:
+  AWS_REGION: ap-south-1
+  TF_DIR: infra
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Assume AWS deploy role (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Read stack outputs from Terraform state
+        id: stack
+        run: |
+          terraform -chdir=$TF_DIR init -input=false
+          terraform -chdir=$TF_DIR output -json > outputs.json
+          {
+            echo "cluster=$(jq -r .ecs_cluster_name.value outputs.json)"
+            echo "migrate_family=$(jq -r .migrate_task_family.value outputs.json)"
+            echo "subnets=$(jq -r '.public_subnet_ids.value | join(",")' outputs.json)"
+            echo "task_sg=$(jq -r .api_task_security_group_id.value outputs.json)"
+            echo "api_repo=$(jq -r .ecr_api_repository_url.value outputs.json)"
+            echo "ui_repo=$(jq -r .ecr_ui_repository_url.value outputs.json)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: ECR login
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push API image
+        env:
+          REPO: ${{ steps.stack.outputs.api_repo }}
+        run: |
+          docker build -t "$REPO:${{ github.sha }}" .
+          docker push "$REPO:${{ github.sha }}"
+
+      - name: Build and push UI image
+        env:
+          REPO: ${{ steps.stack.outputs.ui_repo }}
+          NEXT_PUBLIC_AUTH0_DOMAIN: ${{ vars.NEXT_PUBLIC_AUTH0_DOMAIN }}
+          NEXT_PUBLIC_AUTH0_CLIENT_ID: ${{ vars.NEXT_PUBLIC_AUTH0_CLIENT_ID }}
+          NEXT_PUBLIC_AUTH0_AUDIENCE: ${{ vars.NEXT_PUBLIC_AUTH0_AUDIENCE }}
+        # NEXT_PUBLIC_* values are public SPA identifiers baked into the
+        # client bundle; repo variables, never secrets.
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_AUTH0_DOMAIN \
+            --build-arg NEXT_PUBLIC_AUTH0_CLIENT_ID \
+            --build-arg NEXT_PUBLIC_AUTH0_AUDIENCE \
+            -t "$REPO:${{ github.sha }}" web/
+          docker push "$REPO:${{ github.sha }}"
+
+      # Families whose task definitions CI re-registers with the new sha tag.
+      # Terraform applied first sets the baseline; from then on CI owns revisions
+      # (infra/ecs.tf ignore_changes).
+      - name: Register new task definition revisions
+        id: render
+        env:
+          API_IMAGE: ${{ steps.stack.outputs.api_repo }}:${{ github.sha }}
+          UI_IMAGE: ${{ steps.stack.outputs.ui_repo }}:${{ github.sha }}
+          CLUSTER: ${{ steps.stack.outputs.cluster }}
+        run: |
+          for family in "$CLUSTER-api" "$CLUSTER-ui" "$CLUSTER-worker" "$CLUSTER-migrate"; do
+            aws ecs describe-task-definition --task-definition "$family" \
+              --query 'taskDefinition' \
+              | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy, .enableFaultInjection)' \
+              | jq --arg api "$API_IMAGE" --arg ui "$UI_IMAGE" \
+                   '(.containerDefinitions[] | select(.name == "api" or .name == "worker" or .name == "migrate") | .image) = $api
+                    | (.containerDefinitions[] | select(.name == "ui") | .image) = $ui' \
+              > "td-${family}.json"
+            revision=$(aws ecs register-task-definition --cli-input-json "file://td-${family}.json" \
+              --query 'taskDefinition.revision')
+            echo "${family##*-}=$family:$revision" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Run migrations (one-off run-task, decision #8)
+        env:
+          CLUSTER: ${{ steps.stack.outputs.cluster }}
+          TASK_DEF: ${{ steps.render.outputs.migrate }}
+          SUBNETS: ${{ steps.stack.outputs.subnets }}
+          TASK_SG: ${{ steps.stack.outputs.task_sg }}
+        run: |
+          task_arn=$(aws ecs run-task \
+            --cluster "$CLUSTER" \
+            --launch-type FARGATE \
+            --task-definition "$TASK_DEF" \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$TASK_SG],assignPublicIp=ENABLED}" \
+            --query 'tasks[0].taskArn' --output text)
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$task_arn"
+          exit_code=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$task_arn" \
+            --query 'tasks[0].containers[0].exitCode')
+          [ "$exit_code" = "0" ] || { echo "migrations failed (exit $exit_code)"; exit 1; }
+
+      - name: Roll out services
+        env:
+          CLUSTER: ${{ steps.stack.outputs.cluster }}
+          API_TD: ${{ steps.render.outputs.api }}
+          UI_TD: ${{ steps.render.outputs.ui }}
+          WORKER_TD: ${{ steps.render.outputs.worker }}
+        run: |
+          aws ecs update-service --cluster "$CLUSTER" --service "$CLUSTER-api" \
+            --task-definition "$API_TD" --force-new-deployment
+          aws ecs update-service --cluster "$CLUSTER" --service "$CLUSTER-ui" \
+            --task-definition "$UI_TD" --force-new-deployment
+          # Worker desired count may be 0; still point it at the new revision so
+          # demo scale-ups use the current image.
+          aws ecs update-service --cluster "$CLUSTER" --service "$CLUSTER-worker" \
+            --task-definition "$WORKER_TD"
+          aws ecs wait services-stable --cluster "$CLUSTER" \
+            --services "$CLUSTER-api" "$CLUSTER-ui"

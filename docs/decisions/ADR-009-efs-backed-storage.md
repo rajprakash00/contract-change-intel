@@ -30,7 +30,11 @@ volume.
 - A shared mutable filesystem is a coarser primitive than per-object keys;
   fine at this scale, and the seam for S3 remains where it always was.
 - Task definitions gain the EFS mount + the EFS access point config; IAM
-  gains the EFS mount-target access role.
+  gains the EFS mount-target access role. (Implementation note: the access
+  point enforces its own POSIX user — UID 1000, matching the pinned
+  container user — so the task definitions mount with IAM authorization
+  DISABLED and no extra task-role policy was needed; the access point is
+  the authority. See infra/efs.tf, infra/ecs.tf.)
 
 ## Rejected alternatives
 

@@ -7,8 +7,10 @@ provisioning overruns.
 
 ## Topology
 
-1. **AWS ECS Fargate + RDS PostgreSQL 17 + ECR, us-east-1, Terraform throughout.**
-   One flat `infra/` stack (no remote backend plumbing, no module nesting).
+1. **AWS ECS Fargate + RDS PostgreSQL 17 + ECR, ap-south-1 (Mumbai), Terraform
+   throughout.** (Region pinned by the owner at implementation time; the grill
+   session had used us-east-1 as a placeholder.) One flat `infra/` stack
+   (no remote backend plumbing, no module nesting).
 2. **Edge: purchased domain + Cloudflare free zone → ALB → ECS services.**
    Cloudflare is DNS and TLS termination (Universal SSL, `Full (strict)` against
    an ACM cert on the ALB). The ALB stays the path router: `/api/*` → API

@@ -1,0 +1,19 @@
+# Copy to terraform.tfvars and fill in. Auth0 values are public (the SPA
+# values, same ones the web build inlines) — never secrets here.
+#
+# For the first apply use the bootstrap image tag AND zero desired counts
+# (no image exists in ECR yet; see infra/README.md §First deploy). CI takes
+# over task revisions from the first deploy onward (see infra/ecs.tf).
+#
+#   project               = "cci"
+#   environment           = "prod"
+#   domain_name           = "cci.example.com"
+#   cloudflare_zone_id    = "<zone id from the Cloudflare dashboard>"
+#   auth0_domain          = "change-report.us.auth0.com"
+#   auth0_audience        = "https://change-report.us.auth0.com/me/"
+#   image_tag             = "bootstrap"
+#
+# Idle-at-zero (decision #11) after the demo window:
+#   api_desired_count     = 0
+#   ui_desired_count      = 0
+#   worker_desired_count  = 0

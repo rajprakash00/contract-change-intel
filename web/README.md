@@ -32,5 +32,5 @@ the ALB path-routes `/api/*` instead — there is no CORS anywhere.
 npm test          # vitest — pure logic (role mapping, polling predicate)
 npm run lint
 npx tsc --noEmit
-npm run build
+npm run build     # produces .next/standalone for web/Dockerfile (W6·B)
 ```
