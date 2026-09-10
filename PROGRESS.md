@@ -3,7 +3,8 @@
 Current state + next tasks only. AGENTS.md owns commands and constraints,
 CONTEXT.md the language, `docs/decisions/` the ADRs, `docs/w4-decisions.md`
 the settled W4 design, `docs/w5-decisions.md` the settled W5 design,
-`docs/w6-decisions.md` the settled W6·A UI design. When a block lands, compress
+`docs/w6-decisions.md` the settled W6·A UI design, `docs/w6b-decisions.md`
+the settled W6·B deploy design. When a block lands, compress
 it to a line here — the file's history lives in git, not in this file.
 
 ## State
