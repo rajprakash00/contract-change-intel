@@ -3,7 +3,9 @@
 Current state + next tasks only. AGENTS.md owns commands and constraints,
 CONTEXT.md the language, `docs/decisions/` the ADRs, `docs/w4-decisions.md`
 the settled W4 design, `docs/w5-decisions.md` the settled W5 design,
-`docs/w6-decisions.md` the settled W6·A UI design. When a block lands, compress
+`docs/w6-decisions.md` the settled W6·A UI design, `docs/w6b-decisions.md`
+the settled W6·B deploy design, `docs/writeup.md` the milestone writeup,
+`infra/README.md` the deploy runbook. When a block lands, compress
 it to a line here — the file's history lives in git, not in this file.
 
 ## State
@@ -85,7 +87,22 @@ approve/reject, edit via corrected-values JSON dialog). react-query for
 server state, react-table v8 for the two tables, RHF+zod for the upload
 form, sonner toasts. Pure-logic unit tests (vitest): role-claim mapping and
 the job-settled/poll predicate; npm lint/tsc/build green; proxy verified
-through the running stack.
+through the running stack. · W6·B deploy scaffold (`infra/`,
+docs/w6b-decisions.md, region **ap-south-1**): one flat Terraform stack —
+VPC 2-AZ public-subnet Fargate / private-subnet RDS (no NAT), ALB + ACM +
+Cloudflare DNS records (`/api/*` → API, rest → UI), RDS PG17 db.t4g.micro,
+EFS access point at `/data` (POSIX 1000:1000; API image UID pinned to
+match), ECR (api, ui), SSM SecureStrings (database_url, openai_api_key),
+task execution role, four task definitions (api/ui/worker/migrate) with
+desired counts 1/1/0 and `ignore_changes = [task_definition]` so CI owns
+revisions; S3 backend with native lockfile. `web/Dockerfile` (Next
+standalone, build-time NEXT_PUBLIC_* args) + `.dockerignore` +
+`output: "standalone"`; both images build locally, the UI serves from the
+container. CI: `deploy.yml` (dispatch-only) OIDC → ECR push → migration
+run-task → service rollout; `ci.yml` image job builds both artifacts.
+`infra/README.md` is the runbook; `docs/writeup.md` is the milestone
+writeup with the baseline eval numbers and limitations. The actual apply +
+live deploy await the owner prerequisites (runbook §One-time).
 
 `OPENAI_API_KEY` live and verified end to end; the 6 CUAD fixtures are
 ingested in the dev DB under the eval tenant.
@@ -109,14 +126,18 @@ ruff/mypy clean; 345 integration+unit tests green.
   (one admin, one reviewer; verified 2026-09-08, live SPA logins seen).
   Remaining: prod callback/logout URL values, added when the W6·B domain
   exists.
+- W6·B owner prerequisites (runbook: `infra/README.md` §One-time): S3 state
+  bucket, Cloudflare zone + DNS API token, AWS OIDC deploy role (repo
+  variable `AWS_DEPLOY_ROLE_ARN`), repo variables for the SPA values,
+  `terraform apply`, OpenAI key overwrite in SSM, Auth0 prod callback/logout,
+  then `gh workflow run deploy`. Live smoke + writeup URL numbers after that.
 
 ## Next
 
-The next work is **W6·B AWS ECS/RDS deploy via Terraform** → deployed
-API + UI + writeup with eval numbers. Owner prerequisite for the deploy:
-add prod callback/logout URL values to the Auth0 SPA application once
-the W6·B domain exists. Deferred: rate limits, load tests, Anthropic
-spike, retention.
+**W6·B execution**: owner prerequisites (infra/README.md) → live deploy →
+live smoke + eval numbers against the deployed stack → teardown or
+idle-at-zero per the demo window. Deferred: rate limits, load tests,
+Anthropic spike, retention.
 
 ## Gotchas
 
@@ -128,3 +149,8 @@ spike, retention.
 - `get_settings` is lru_cached and auth tests flip `AUTH0_DOMAIN` via env —
   `tests/conftest.py::auth_env` clears the cache around every test; keep
   doing so if other env-driven settings grow knobs.
+- The dev `cci` database accumulates rows across sessions (test residue on
+  top of the eval fixtures); per-test `delete(Document)` cleanup then trips
+  the document_chunks FK. CI and scratch DBs are clean and green — when the
+  suite misbehaves locally, point `DATABASE_URL` at a scratch database
+  first before suspecting the code.

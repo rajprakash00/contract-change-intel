@@ -5,6 +5,9 @@ import type { NextConfig } from "next";
 // path-routes at the ALB instead — no CORS anywhere, root_path lives in the
 // API's Settings (docs/w6-decisions.md #6).
 const nextConfig: NextConfig = {
+  // Standalone output serves the container image (web/Dockerfile): a minimal
+  // server bundle without node_modules; the W6·B UI Fargate task runs it.
+  output: "standalone",
   async rewrites() {
     const apiOrigin = process.env.API_ORIGIN ?? "http://localhost:8000";
     return [{ source: "/api/:path*", destination: `${apiOrigin}/:path*` }];

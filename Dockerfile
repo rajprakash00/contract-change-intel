@@ -10,8 +10,10 @@ COPY migrations ./migrations
 COPY alembic.ini ./
 
 # Runtime stage: venv + code only, non-root, no build tooling.
+# UID is pinned to 1000 to match the EFS access point's POSIX user/ownership
+# (infra/efs.tf) so Fargate tasks can write {data_dir}/{tenant}/{sha256}.
 FROM python:3.13-slim-bookworm
-RUN useradd --create-home appuser
+RUN useradd --create-home --uid 1000 appuser
 WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/app ./app
