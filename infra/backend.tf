@@ -5,7 +5,8 @@
 #
 #   aws s3api create-bucket \
 #     --bucket cci-tfstate-ap-south-1 \
-#     --region ap-south-1 --create-bucket-configuration Location=ap-south-1
+#   --region ap-south-1 \
+#   --create-bucket-configuration LocationConstraint=ap-south-1
 #   aws s3api put-bucket-versioning \
 #     --bucket cci-tfstate-ap-south-1 \
 #     --versioning-configuration Status=Enabled

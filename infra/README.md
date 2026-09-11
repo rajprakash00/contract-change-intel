@@ -12,7 +12,7 @@ that, redeploy is scripted (under an hour, mostly waiting).
 | `security.tf` | SG chain ALB → api/ui task SGs → RDS 5432, EFS 2049 |
 | `alb.tf` | ALB, ACM cert, `/api/*` → API, rest → UI; Cloudflare records |
 | `efs.tf` | EFS + access point (`/data`, POSIX 1000:1000 — ADR-009) |
-| `rds.tf` | RDS PG17 db.t4g.micro, 20 GB gp3, single-AZ (decision #6) |
+| `rds.tf` | RDS PG17 db.t4g.small, 20 GB gp3, single-AZ (decision #6; small because micro hits insufficient-capacity in ap-south-1) |
 | `ecr.tf` | Two immutable ECR repos (api, ui) |
 | `ssm.tf` | SecureStrings: `database_url`, `openai_api_key` (decision #7) |
 | `iam.tf` | Task execution role (+ SSM/KMS read) |
@@ -24,7 +24,8 @@ that, redeploy is scripted (under an hour, mostly waiting).
 1. **S3 state bucket** (outside Terraform; survives teardown):
    ```sh
    aws s3api create-bucket --bucket cci-tfstate-ap-south-1 \
-     --region ap-south-1 --create-bucket-configuration Location=ap-south-1
+     --region ap-south-1 \
+     --create-bucket-configuration LocationConstraint=ap-south-1
    aws s3api put-bucket-versioning --bucket cci-tfstate-ap-south-1 \
      --versioning-configuration Status=Enabled
    ```

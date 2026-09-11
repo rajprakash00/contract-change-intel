@@ -17,8 +17,8 @@ resource "aws_db_subnet_group" "main" {
 resource "aws_db_instance" "main" {
   identifier     = "${var.project}-${var.environment}-pg"
   engine         = "postgres"
-  engine_version = "17.4"
-  instance_class = "db.t4g.micro"
+  engine_version = "17.11" # 17.4 is not offered in ap-south-1; latest PG17 there
+  instance_class = "db.t4g.small" # micro repeatedly hit insufficient-capacity in ap-south-1
 
   allocated_storage = 20
   storage_type      = "gp3"

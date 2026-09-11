@@ -13,7 +13,9 @@ resource "aws_efs_file_system" "main" {
 }
 
 resource "aws_efs_mount_target" "main" {
-  for_each = toset(aws_subnet.public[*].id)
+  # Keyed by subnet index (known at plan time), not subnet id (apply-time);
+  # ids are only available after the subnets exist.
+  for_each = { for idx, subnet in aws_subnet.public : idx => subnet.id }
 
   file_system_id  = aws_efs_file_system.main.id
   subnet_id       = each.value

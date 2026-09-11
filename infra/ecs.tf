@@ -72,7 +72,7 @@ resource "aws_ecs_task_definition" "api" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.task["$api"].name
+          "awslogs-group"         = aws_cloudwatch_log_group.task["api"].name
           "awslogs-region"        = var.region
           "awslogs-stream-prefix" = "api"
         }
@@ -155,7 +155,7 @@ resource "aws_ecs_task_definition" "ui" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.task["$ui"].name
+          "awslogs-group"         = aws_cloudwatch_log_group.task["ui"].name
           "awslogs-region"        = var.region
           "awslogs-stream-prefix" = "ui"
         }
@@ -220,7 +220,7 @@ resource "aws_ecs_task_definition" "worker" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.task["$worker"].name
+          "awslogs-group"         = aws_cloudwatch_log_group.task["worker"].name
           "awslogs-region"        = var.region
           "awslogs-stream-prefix" = "worker"
         }
@@ -281,7 +281,7 @@ resource "aws_ecs_task_definition" "migrate" {
       logConfiguration = {
         logDriver = "awslogs"
         options = {
-          "awslogs-group"         = aws_cloudwatch_log_group.task["$migrate"].name
+          "awslogs-group"         = aws_cloudwatch_log_group.task["migrate"].name
           "awslogs-region"        = var.region
           "awslogs-stream-prefix" = "migrate"
         }
