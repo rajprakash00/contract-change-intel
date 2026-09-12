@@ -1,10 +1,26 @@
 import uuid
+from collections.abc import Sequence
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.change_report_job import ChangeReportJob, ChangeReportJobStatus
 from app.repositories import job_claims
+
+
+async def list_for_base_document(
+    session: AsyncSession, *, tenant_id: uuid.UUID, base_document_id: uuid.UUID
+) -> Sequence[ChangeReportJob]:
+    # Newest first; id breaks ties so equal-timestamp rows keep a stable order.
+    result = await session.execute(
+        select(ChangeReportJob)
+        .where(
+            ChangeReportJob.tenant_id == tenant_id,
+            ChangeReportJob.base_document_id == base_document_id,
+        )
+        .order_by(ChangeReportJob.created_at.desc(), ChangeReportJob.id.asc())
+    )
+    return result.scalars().all()
 
 
 async def create(

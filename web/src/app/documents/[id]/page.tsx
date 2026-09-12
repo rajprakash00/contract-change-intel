@@ -12,7 +12,7 @@ import { errorMessage } from "@/lib/api";
 import { useApi } from "@/lib/api-context";
 import { JOB_POLL_INTERVAL_MS, isSettled, refetchIntervalForJob } from "@/lib/jobs";
 import { isAdmin } from "@/lib/roles";
-import { JobStatus } from "@/lib/types";
+import { ChangeReportJobRead, JobStatus } from "@/lib/types";
 import { DocumentStatusBadge, JobStatusBadge } from "@/components/status-badges";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -25,9 +25,11 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 
-// Job ids survive a reload in localStorage so an in-flight pipeline job keeps
-// polling after the user navigates away and back (there is no jobs-by-document
-// endpoint to recover them server-side).
+// Ingestion/extraction job ids survive a reload in localStorage so an
+// in-flight pipeline job keeps polling after the user navigates away and
+// back (there is no jobs-by-document endpoint for those kinds). Change
+// report jobs need no such trick: the per-agreement history endpoint
+// recovers them server-side.
 function usePersistedJobId(documentId: string, kind: string) {
   const key = `cci:job:${kind}:${documentId}`;
   const [jobId, setJobId] = useState<string | null>(() =>
@@ -86,6 +88,21 @@ export default function DocumentDetailPage() {
     refetchInterval: pipelineInFlight ? JOB_POLL_INTERVAL_MS : false,
   });
 
+  const reportJobs = useQuery({
+    queryKey: ["change-report-jobs", documentId],
+    queryFn: () => api.listChangeReportJobs(documentId),
+    // Only documents with amendments can ever carry reports (enqueue names
+    // this document as the base; deleting an amendment deletes its reports),
+    // so skip the call everywhere else.
+    enabled: (documents.data?.items ?? []).some(
+      (d) => d.amends_document_id === documentId,
+    ),
+    refetchInterval: (query) =>
+      (query.state.data ?? []).some((job) => !isSettled(job.status))
+        ? JOB_POLL_INTERVAL_MS
+        : false,
+  });
+
   const ingestionStatus = ingestionJob.data?.status;
   const extractionStatus = extractionJob.data?.status;
 
@@ -134,10 +151,13 @@ export default function DocumentDetailPage() {
   }
 
   const doc = document.data;
-  const amendments = (documents.data?.items ?? []).filter(
-    (d) => d.amends_document_id === doc.id,
-  );
-  const parent = (documents.data?.items ?? []).find((d) => d.id === doc.amends_document_id);
+  const allDocuments = documents.data?.items ?? [];
+  const hasAmendments = allDocuments.some((d) => d.amends_document_id === doc.id);
+  const amendments = allDocuments.filter((d) => d.amends_document_id === doc.id);
+  const parent = allDocuments.find((d) => d.id === doc.amends_document_id);
+  const reports = reportJobs.data ?? [];
+  const amendmentName = (amendedDocumentId: string) =>
+    allDocuments.find((d) => d.id === amendedDocumentId)?.filename ?? "Amendment";
 
   return (
     <div className="space-y-8">
@@ -209,43 +229,59 @@ export default function DocumentDetailPage() {
         </>
       )}
 
-      {admin && (
+      {admin && hasAmendments && (
         <>
           <Separator />
           <section className="space-y-4">
             <h2 className="text-lg font-semibold">Change report</h2>
-            {amendments.length ? (
-              <div className="flex max-w-xl flex-col gap-3">
-                <div className="space-y-2">
-                  <Label htmlFor="amendment">Amendment</Label>
-                  <Select value={amendmentId} onValueChange={setAmendmentId}>
-                    <SelectTrigger id="amendment" className="w-full">
-                      <SelectValue placeholder="Choose an amendment" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {amendments.map((amendment) => (
-                        <SelectItem key={amendment.id} value={amendment.id}>
-                          {amendment.filename}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button
-                  className="w-fit"
-                  disabled={!amendmentId || generateReport.isPending}
-                  onClick={() => generateReport.mutate()}
-                >
-                  <GitCompareArrows aria-hidden />
-                  Generate change report
-                </Button>
+            <div className="flex max-w-xl flex-col gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="amendment">Amendment</Label>
+                <Select value={amendmentId} onValueChange={setAmendmentId}>
+                  <SelectTrigger id="amendment" className="w-full">
+                    <SelectValue placeholder="Choose an amendment" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {amendments.map((amendment) => (
+                      <SelectItem key={amendment.id} value={amendment.id}>
+                        {amendment.filename}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button
+                className="w-fit"
+                disabled={!amendmentId || generateReport.isPending}
+                onClick={() => generateReport.mutate()}
+              >
+                <GitCompareArrows aria-hidden />
+                Generate change report
+              </Button>
+            </div>
+          </section>
+        </>
+      )}
+
+      {hasAmendments && (
+        <>
+          <Separator />
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">Change reports</h2>
+            {reportJobs.isLoading ? (
+              <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : reports.length ? (
+              <div className="max-w-xl space-y-2">
+                {reports.map((job) => (
+                  <ReportJobRow
+                    key={job.id}
+                    job={job}
+                    amendmentName={amendmentName(job.amended_document_id)}
+                  />
+                ))}
               </div>
             ) : (
-              <p className="max-w-xl text-sm text-muted-foreground">
-                Upload an amendment of this agreement to see what changed. Amendments
-                are uploaded from the documents page with “Amends” set to this
-                agreement.
-              </p>
+              <p className="text-sm text-muted-foreground">No change reports yet.</p>
             )}
           </section>
         </>
@@ -272,6 +308,40 @@ function JobRow({
       <span className="w-24 text-muted-foreground">{kind}</span>
       <JobStatusBadge status={status} />
       {error && <span className="text-destructive">{error}</span>}
+    </div>
+  );
+}
+
+// One history row: queued/running/failed read as status; completed rows
+// carry the link into the report view itself.
+function ReportJobRow({
+  job,
+  amendmentName,
+}: {
+  job: ChangeReportJobRead;
+  amendmentName: string;
+}) {
+  const label = `vs ${amendmentName}`;
+  const generated = new Date(job.created_at).toLocaleString();
+  return (
+    <div className="flex items-center gap-3 text-sm">
+      <span className="min-w-0 flex-1 truncate text-muted-foreground">{label}</span>
+      {job.status === "completed" ? (
+        <Link
+          href={`/change-report-jobs/${job.id}`}
+          className="flex items-center gap-2 hover:underline"
+        >
+          <JobStatusBadge status={job.status} />
+          <span className="whitespace-nowrap">{generated}</span>
+        </Link>
+      ) : (
+        <>
+          <JobStatusBadge status={job.status} />
+          {job.error && (
+            <span className="min-w-0 flex-1 truncate text-destructive">{job.error}</span>
+          )}
+        </>
+      )}
     </div>
   );
 }

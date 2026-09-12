@@ -116,6 +116,16 @@ carry the source Change in their payload (enriched at routing time,
 `change` = kind/clause_ref/severity/description) and the queue renders
 structured obligation + change fields with a deep-link to the change
 report — legacy rows without the enrichment still render the obligation.
+· Post-mvp (#22, #23): `GET /agreements/{id}/change-report-jobs` lists the
+agreement's full Change Report history (tenant-scoped, 404 for unknown/
+foreign agreements, newest first, every job with its status) and the
+document detail page renders it for any signed-in principal —
+queued/running rows show status, completed rows link into the report
+view, light polling while unsettled; the delete-vs-amend race (an
+amendment landing between the `has_amendments` pre-check and the delete)
+now surfaces as the documented 409 through the central error table
+instead of a raw 500 — the service converts the RESTRICT FK
+IntegrityError to `DocumentHasAmendmentsError`.
 
 `OPENAI_API_KEY` live and verified end to end; the 6 CUAD fixtures are
 ingested in the dev DB under the eval tenant.
@@ -124,7 +134,7 @@ Baselines (`evals/baselines/`): retrieve recall@5 0.82 / recall@10 0.96;
 extract precision 0.90 / recall 1.0 / citation_validity 1.0; diff
 precision 1.0 / recall 1.0; impact_map precision 0.83 / recall 0.75
 (first live run, gpt-4o-mini — single-run wobble per the README caveat).
-ruff/mypy clean; 347 integration+unit tests green.
+ruff/mypy clean; 352 integration+unit tests green.
 
 ## Open / blocked
 
@@ -160,13 +170,13 @@ local stack), same-sha deploy rerun guard.
   configure-aws-credentials is `sts.amazonaws.com`, not the issuer URL.
 - RDS db.t4g.micro repeatedly hit `insufficient-capacity` in ap-south-1
   (Mumbai); db.t4g.small provisions fine.
-- Delete-vs-amend race: deleting a Document now cascades its dependents in
-  one transaction (ingestion/extraction jobs, Chunks, parsed text, the
-  Change Reports naming it as the Amendment, and the Review Items routed
-  from them); the base-with-amendments 409 stands. The residual race — an
-  amendment inserted between `has_amendments` and the delete — still falls
-  through to the RESTRICT FK as a 500; to be handled if concurrent-write
-  tests arrive.
+- Delete-vs-amend race: deleting a Document cascades its dependents in one
+  transaction (ingestion/extraction jobs, Chunks, parsed text, the Change
+  Reports naming it as the Amendment, and the Review Items routed from
+  them); the base-with-amendments 409 stands, and an amendment landing in
+  the race window between `has_amendments` and the delete surfaces as 409
+  too — the service maps the RESTRICT FK IntegrityError onto
+  `DocumentHasAmendmentsError` (#23).
 - Auth0 SPA session restore on refresh needs refresh tokens, not the
   `prompt=none` iframe: browsers with partitioned third-party cookies
   block the iframe, which used to drop signed-in users back on the
