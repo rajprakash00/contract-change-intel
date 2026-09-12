@@ -8,8 +8,15 @@ import { ApiContextProvider } from "@/lib/api-context";
 import { Toaster } from "@/components/ui/sonner";
 
 // Auth0 SPA login (docs/w6-decisions.md #2): PKCE, silent refresh with
-// rotating refresh tokens, in-memory token cache. Values come from the
-// Auth0 SPA application registration (see .env.example).
+// rotating refresh tokens. Values come from the Auth0 SPA application
+// registration (see .env.example).
+//
+// The session must survive a page refresh: localstorage cache + refresh
+// tokens let the SDK renew on load without the prompt=none iframe, which
+// browsers with partitioned third-party cookies block — without this a
+// signed-in user refreshing `/` fails the silent check and would be shown
+// the landing page. offline_access is required for refresh tokens; the
+// Auth0 API needs "Allow Offline Access" (on by default).
 const domain = process.env.NEXT_PUBLIC_AUTH0_DOMAIN;
 const clientId = process.env.NEXT_PUBLIC_AUTH0_CLIENT_ID;
 const audience = process.env.NEXT_PUBLIC_AUTH0_AUDIENCE;
@@ -49,9 +56,11 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       <Auth0Provider
         domain={domain!}
         clientId={clientId!}
+        useRefreshTokens
+        cacheLocation="localstorage"
         authorizationParams={{
           audience: audience!,
-          scope: "openid profile email",
+          scope: "openid profile email offline_access",
           redirect_uri:
             typeof window === "undefined"
               ? undefined

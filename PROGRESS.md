@@ -160,9 +160,19 @@ local stack), same-sha deploy rerun guard.
   configure-aws-credentials is `sts.amazonaws.com`, not the issuer URL.
 - RDS db.t4g.micro repeatedly hit `insufficient-capacity` in ap-south-1
   (Mumbai); db.t4g.small provisions fine.
-- Delete-vs-amend race: an amendment inserted between `has_amendments` and
-  the delete falls through to the RESTRICT FK and surfaces as a 500; to be
-  handled if concurrent-write tests arrive.
+- Delete-vs-amend race: deleting a Document now cascades its dependents in
+  one transaction (ingestion/extraction jobs, Chunks, parsed text, the
+  Change Reports naming it as the Amendment, and the Review Items routed
+  from them); the base-with-amendments 409 stands. The residual race — an
+  amendment inserted between `has_amendments` and the delete — still falls
+  through to the RESTRICT FK as a 500; to be handled if concurrent-write
+  tests arrive.
+- Auth0 SPA session restore on refresh needs refresh tokens, not the
+  `prompt=none` iframe: browsers with partitioned third-party cookies
+  block the iframe, which used to drop signed-in users back on the
+  landing page. Wired `useRefreshTokens` + `cacheLocation: "localstorage"`
+  + `offline_access` (providers.tsx); the Auth0 API must keep "Allow
+  Offline Access" on.
 - `get_settings` is lru_cached and auth tests flip `AUTH0_DOMAIN` via env —
   `tests/conftest.py::auth_env` clears the cache around every test; keep
   doing so if other env-driven settings grow knobs.
