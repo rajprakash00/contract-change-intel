@@ -91,6 +91,12 @@ export default function DocumentDetailPage() {
   const reportJobs = useQuery({
     queryKey: ["change-report-jobs", documentId],
     queryFn: () => api.listChangeReportJobs(documentId),
+    // Only documents with amendments can ever carry reports (enqueue names
+    // this document as the base; deleting an amendment deletes its reports),
+    // so skip the call everywhere else.
+    enabled: (documents.data?.items ?? []).some(
+      (d) => d.amends_document_id === documentId,
+    ),
     refetchInterval: (query) =>
       (query.state.data ?? []).some((job) => !isSettled(job.status))
         ? JOB_POLL_INTERVAL_MS
@@ -146,6 +152,7 @@ export default function DocumentDetailPage() {
 
   const doc = document.data;
   const allDocuments = documents.data?.items ?? [];
+  const hasAmendments = allDocuments.some((d) => d.amends_document_id === doc.id);
   const amendments = allDocuments.filter((d) => d.amends_document_id === doc.id);
   const parent = allDocuments.find((d) => d.id === doc.amends_document_id);
   const reports = reportJobs.data ?? [];
@@ -222,67 +229,63 @@ export default function DocumentDetailPage() {
         </>
       )}
 
-      {admin && (
+      {admin && hasAmendments && (
         <>
           <Separator />
           <section className="space-y-4">
             <h2 className="text-lg font-semibold">Change report</h2>
-            {amendments.length ? (
-              <div className="flex max-w-xl flex-col gap-3">
-                <div className="space-y-2">
-                  <Label htmlFor="amendment">Amendment</Label>
-                  <Select value={amendmentId} onValueChange={setAmendmentId}>
-                    <SelectTrigger id="amendment" className="w-full">
-                      <SelectValue placeholder="Choose an amendment" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {amendments.map((amendment) => (
-                        <SelectItem key={amendment.id} value={amendment.id}>
-                          {amendment.filename}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button
-                  className="w-fit"
-                  disabled={!amendmentId || generateReport.isPending}
-                  onClick={() => generateReport.mutate()}
-                >
-                  <GitCompareArrows aria-hidden />
-                  Generate change report
-                </Button>
+            <div className="flex max-w-xl flex-col gap-3">
+              <div className="space-y-2">
+                <Label htmlFor="amendment">Amendment</Label>
+                <Select value={amendmentId} onValueChange={setAmendmentId}>
+                  <SelectTrigger id="amendment" className="w-full">
+                    <SelectValue placeholder="Choose an amendment" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {amendments.map((amendment) => (
+                      <SelectItem key={amendment.id} value={amendment.id}>
+                        {amendment.filename}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
-            ) : (
-              <p className="max-w-xl text-sm text-muted-foreground">
-                Upload an amendment of this agreement to see what changed. Amendments
-                are uploaded from the documents page with “Amends” set to this
-                agreement.
-              </p>
-            )}
+              <Button
+                className="w-fit"
+                disabled={!amendmentId || generateReport.isPending}
+                onClick={() => generateReport.mutate()}
+              >
+                <GitCompareArrows aria-hidden />
+                Generate change report
+              </Button>
+            </div>
           </section>
         </>
       )}
 
-      <Separator />
-      <section className="space-y-3">
-        <h2 className="text-lg font-semibold">Change reports</h2>
-        {reportJobs.isLoading ? (
-          <p className="text-sm text-muted-foreground">Loading…</p>
-        ) : reports.length ? (
-          <div className="max-w-xl space-y-2">
-            {reports.map((job) => (
-              <ReportJobRow
-                key={job.id}
-                job={job}
-                amendmentName={amendmentName(job.amended_document_id)}
-              />
-            ))}
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">No change reports yet.</p>
-        )}
-      </section>
+      {hasAmendments && (
+        <>
+          <Separator />
+          <section className="space-y-3">
+            <h2 className="text-lg font-semibold">Change reports</h2>
+            {reportJobs.isLoading ? (
+              <p className="text-sm text-muted-foreground">Loading…</p>
+            ) : reports.length ? (
+              <div className="max-w-xl space-y-2">
+                {reports.map((job) => (
+                  <ReportJobRow
+                    key={job.id}
+                    job={job}
+                    amendmentName={amendmentName(job.amended_document_id)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No change reports yet.</p>
+            )}
+          </section>
+        </>
+      )}
     </div>
   );
 }
