@@ -61,16 +61,23 @@ Then:
 6. **Auth0 SPA application**: add the prod callback
    `https://<domain>/callback` and logout/web-origin `https://<domain>`
    (the remaining item in PROGRESS.md's Open section).
-7. **Deploy**: `gh workflow run deploy` — pushes both images (sha tags),
-   runs the migration run-task (`alembic upgrade head`), rolls all services,
+7. **Deploy**: first raise the service counts — `terraform apply` with no
+   `-var` overrides (defaults 1/1/0; the first apply left them at zero and
+   the workflow never changes desired count). Tasks briefly crash-loop on
+   the nonexistent `bootstrap` tag until CI rolls real images. Then
+   `gh workflow run deploy` — pushes both images (sha tags), runs the
+   migration run-task (`alembic upgrade head`), rolls all services,
    and waits for stability.
-8. **Seed + demo**: scale the worker to 1, re-seed the CUAD fixtures, ingest:
+8. **Demo**: scale the worker to 1, exercise the flow in the UI (upload →
+   ingest → extract → change report):
    ```sh
    aws ecs update-service --cluster cci-prod --service cci-prod-worker \
      --task-definition cci-prod-worker --desired-count 1
-   python evals/seed_fixtures.py   # against the deployed API
    ```
    Scale back: same command with `--desired-count 0`.
+   `evals/seed_fixtures.py` is local-stack only (local `.env` DATABASE_URL +
+   local data dir) — prod seeding was deliberately skipped; evals run
+   against the local fixtures, prod demos use manual uploads.
 
 ## Redeploy
 

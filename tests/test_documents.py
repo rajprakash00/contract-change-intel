@@ -18,7 +18,13 @@ from sqlalchemy import delete, func, select
 
 import app.db as db
 from app.config import get_settings
+from app.models.change_report_job import ChangeReportJob, ChangeReportJobStatus
 from app.models.document import Document
+from app.models.document_chunk import DocumentChunk
+from app.models.document_text import DocumentText
+from app.models.extraction_job import ExtractionJob, ExtractionJobStatus
+from app.models.ingestion_job import IngestionJob, IngestionJobStatus
+from app.models.review_item import ReviewItem, ReviewItemSource
 from tests.fake_jwks import bearer
 
 PDF_MIME = "application/pdf"
@@ -48,6 +54,16 @@ async def clean_documents(client: AsyncClient) -> AsyncIterator[None]:
     yield
     sessionmaker = db.get_sessionmaker()
     async with sessionmaker() as session:
+        # Leaf-first: every table the RESTRICT FKs point at documents from.
+        for model in (
+            ReviewItem,
+            ChangeReportJob,
+            ExtractionJob,
+            IngestionJob,
+            DocumentChunk,
+            DocumentText,
+        ):
+            await session.execute(delete(model))
         await session.execute(delete(Document))
         await session.commit()
 
@@ -392,6 +408,145 @@ async def test_delete_document_with_amendments_conflicts_until_amendments_remove
     freed = await client.delete(f"/documents/{parent.json()['id']}", headers=headers)
     assert freed.status_code == 204
     assert await document_count() == 0
+
+
+async def test_deleting_an_amendment_cascades_to_its_pipeline_rows_and_reports(
+    client: AsyncClient,
+) -> None:
+    """Deleting a Document takes its pipeline rows with it — jobs, Chunks,
+    parsed text, the Change Reports naming it as the Amendment, and the
+    Review Items routed from those reports — while the base version keeps
+    its own. The RESTRICT FKs must surface as a clean 204, never a 500."""
+    tenant_id = uuid.uuid4()
+    headers = bearer(tenant_id)
+    parent = await client.post(
+        "/documents", files={"file": ("msa.txt", b"msa v1", TEXT_MIME)}, headers=headers
+    )
+    amendment = await client.post(
+        "/documents",
+        files={"file": ("amd.txt", b"msa v2", TEXT_MIME)},
+        data={"amends_document_id": parent.json()["id"]},
+        headers=headers,
+    )
+    assert parent.status_code == 201 and amendment.status_code == 201
+    parent_id = parent.json()["id"]
+    amendment_id = amendment.json()["id"]
+
+    sessionmaker = db.get_sessionmaker()
+    async with sessionmaker() as session:
+        parent_job = IngestionJob(
+            tenant_id=tenant_id,
+            document_id=parent_id,
+            status=IngestionJobStatus.completed,
+            result={"chunk_count": 1},
+        )
+        amendment_job = IngestionJob(
+            tenant_id=tenant_id,
+            document_id=amendment_id,
+            status=IngestionJobStatus.completed,
+            result={"chunk_count": 1},
+        )
+        amendment_extraction = ExtractionJob(
+            tenant_id=tenant_id,
+            document_id=amendment_id,
+            status=ExtractionJobStatus.completed,
+            result={"obligations": [], "defined_terms": []},
+        )
+        session.add_all([parent_job, amendment_job, amendment_extraction])
+        await session.flush()
+        session.add_all(
+            [
+                DocumentChunk(
+                    tenant_id=tenant_id,
+                    document_id=parent_id,
+                    ordinal=0,
+                    text="msa v1",
+                    char_start=0,
+                    char_end=6,
+                    embedding=None,
+                ),
+                DocumentChunk(
+                    tenant_id=tenant_id,
+                    document_id=amendment_id,
+                    ordinal=0,
+                    text="msa v2",
+                    char_start=0,
+                    char_end=6,
+                    embedding=None,
+                ),
+                DocumentText(
+                    tenant_id=tenant_id, document_id=amendment_id, text="msa v2", page_map=[]
+                ),
+            ]
+        )
+        report = ChangeReportJob(
+            tenant_id=tenant_id,
+            base_document_id=parent_id,
+            amended_document_id=amendment_id,
+            status=ChangeReportJobStatus.completed,
+            result={"changes": []},
+        )
+        session.add(report)
+        await session.flush()
+        session.add_all(
+            [
+                ReviewItem(
+                    tenant_id=tenant_id,
+                    source=ReviewItemSource.extraction,
+                    item_type="obligation",
+                    document_id=amendment_id,
+                    job_id=amendment_extraction.id,
+                    payload={"clause_ref": "2.1", "description": "deliver", "owner": "Licensor"},
+                    confidence=0.4,
+                ),
+                ReviewItem(
+                    tenant_id=tenant_id,
+                    source=ReviewItemSource.impact_mapping,
+                    item_type="impact",
+                    document_id=parent_id,
+                    job_id=report.id,
+                    payload={"clause_ref": "2.1", "description": "deliver", "owner": "Licensor"},
+                    confidence=0.4,
+                ),
+            ]
+        )
+        await session.commit()
+        amendment_job_id = amendment_job.id
+        amendment_extraction_id = amendment_extraction.id
+        report_id = report.id
+
+    deleted = await client.delete(f"/documents/{amendment_id}", headers=headers)
+    assert deleted.status_code == 204, deleted.text
+
+    async with sessionmaker() as session:
+        assert await session.get(IngestionJob, amendment_job_id) is None
+        assert await session.get(ExtractionJob, amendment_extraction_id) is None
+        assert await session.get(ChangeReportJob, report_id) is None
+        assert await session.get(DocumentText, amendment_id) is None
+        amendment_chunks = (
+            await session.execute(
+                select(func.count())
+                .select_from(DocumentChunk)
+                .where(DocumentChunk.document_id == amendment_id)
+            )
+        ).scalar_one()
+        assert amendment_chunks == 0
+        assert (await session.execute(select(ReviewItem))).scalars().all() == []
+        # The base version keeps its own pipeline rows and its row.
+        assert await session.get(Document, parent_id) is not None
+        assert await session.get(IngestionJob, parent_job.id) is not None
+        parent_chunks = (
+            await session.execute(
+                select(func.count())
+                .select_from(DocumentChunk)
+                .where(DocumentChunk.document_id == parent_id)
+            )
+        ).scalar_one()
+        assert parent_chunks == 1
+
+    # With its amendment gone, the base version is deletable too.
+    freed = await client.delete(f"/documents/{parent_id}", headers=headers)
+    assert freed.status_code == 204
 
 
 async def test_oversize_upload_rejected_with_413(

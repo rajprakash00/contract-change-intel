@@ -649,7 +649,9 @@ class TestImpactReviewRouting:
     """W5·A: impact mappings whose Confidence falls below the threshold are
     routed to the review queue; the report itself still carries the mapping."""
 
-    async def test_impact_below_the_threshold_becomes_a_pending_review_item(self) -> None:
+    async def test_impact_below_the_threshold_becomes_a_review_item_with_the_source_change(
+        self,
+    ) -> None:
         base, amended = await ready_pair_with_base_obligation()
         async with db.get_sessionmaker()() as session:
             job = await enqueue_change_report(
@@ -685,6 +687,12 @@ class TestImpactReviewRouting:
             "description": "Licensor shall deliver within 14 days.",
             "owner": "Licensor",
             "confidence": 0.8,
+            "change": {
+                "kind": "modified",
+                "clause_ref": "2.1",
+                "severity": "high",
+                "description": "The delivery window doubles.",
+            },
         }
         # The report itself is untouched: routing is additive, not gating.
         async with db.get_sessionmaker()() as session:

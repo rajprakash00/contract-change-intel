@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.change_report_job import ChangeReportJob, ChangeReportJobStatus
@@ -69,3 +69,25 @@ async def mark_failed(
     await session.commit()
     await session.refresh(job)
     return job
+
+
+async def delete_for_amendment(
+    session: AsyncSession, *, amended_document_id: uuid.UUID
+) -> list[uuid.UUID]:
+    """Delete the Change Reports naming this document as the Amendment and
+    return their ids, so callers can delete the Review Items routed from
+    them. A report whose base is the deleted document cannot exist here:
+    a base with amendments is refused upstream (409). No commit: the
+    document-delete sweep commits once at the end."""
+    ids = list(
+        (
+            await session.execute(
+                select(ChangeReportJob.id).where(
+                    ChangeReportJob.amended_document_id == amended_document_id
+                )
+            )
+        ).scalars()
+    )
+    if ids:
+        await session.execute(delete(ChangeReportJob).where(ChangeReportJob.id.in_(ids)))
+    return ids

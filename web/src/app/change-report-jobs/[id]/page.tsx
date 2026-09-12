@@ -7,7 +7,7 @@ import { Loader2 } from "lucide-react";
 import { useApi } from "@/lib/api-context";
 import { refetchIntervalForJob } from "@/lib/jobs";
 import { Change, ChangeSpan, ChangeImpact } from "@/lib/types";
-import { JobStatusBadge } from "@/components/status-badges";
+import { JobStatusBadge, ChangeKindBadge, SeverityBadge } from "@/components/status-badges";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export default function ChangeReportJobPage() {
@@ -85,7 +85,7 @@ function ChangeCard({ change }: { change: Change }) {
               {change.clause_ref}
             </span>
           )}
-          <SeverityBadge severity={change.severity} />
+          <SeverityBadge severity={change.severity} className="ml-auto" />
         </div>
         <CardTitle className="text-base font-normal leading-relaxed">
           {change.description}
@@ -154,27 +154,5 @@ function ImpactRow({ impact }: { impact: ChangeImpact }) {
       </div>
       <p className="mt-1 text-sm leading-relaxed">{impact.description}</p>
     </div>
-  );
-}
-
-function ChangeKindBadge({ kind }: { kind: Change["kind"] }) {
-  return (
-    <span className="rounded-md bg-secondary px-2 py-0.5 text-xs font-medium text-secondary-foreground">
-      {kind}
-    </span>
-  );
-}
-
-function SeverityBadge({ severity }: { severity: Change["severity"] }) {
-  const className =
-    severity === "high"
-      ? "bg-destructive text-white"
-      : severity === "medium"
-        ? "bg-[var(--severity-medium)] text-black"
-        : "bg-muted text-muted-foreground";
-  return (
-    <span className={`ml-auto rounded-md px-2 py-0.5 text-xs font-medium ${className}`}>
-      {severity} impact
-    </span>
   );
 }

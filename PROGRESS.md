@@ -101,8 +101,21 @@ standalone, build-time NEXT_PUBLIC_* args) + `.dockerignore` +
 container. CI: `deploy.yml` (dispatch-only) OIDC → ECR push → migration
 run-task → service rollout; `ci.yml` image job builds both artifacts.
 `infra/README.md` is the runbook; `docs/writeup.md` is the milestone
-writeup with the baseline eval numbers and limitations. The actual apply +
-live deploy await the owner prerequisites (runbook §One-time).
+writeup with the baseline eval numbers and limitations. Deployed live
+2026-09-11 at `https://change-report.byraj.dev` (full flow verified via
+UI: login, upload, ingest, extract, amendment change report); first apply
+hit ap-south-1 db.t4g.micro insufficient-capacity → db.t4g.small. ·
+Post-deploy polish (issues #19–#21): font tokens fixed — body renders
+Geist Sans (the token no longer self-references), duplicate
+heading/serif tokens collapsed to one `--font-heading`, base type 17px;
+custom SVG brand mark + favicon replace the stock assets and the dead
+create-next-app SVGs are gone; a static landing page is the entry state
+for logged-out visitors (no auto-redirect — both CTAs trigger the PKCE
+redirect, signed-in users skip straight to the app); impact review items
+carry the source Change in their payload (enriched at routing time,
+`change` = kind/clause_ref/severity/description) and the queue renders
+structured obligation + change fields with a deep-link to the change
+report — legacy rows without the enrichment still render the obligation.
 
 `OPENAI_API_KEY` live and verified end to end; the 6 CUAD fixtures are
 ingested in the dev DB under the eval tenant.
@@ -111,41 +124,55 @@ Baselines (`evals/baselines/`): retrieve recall@5 0.82 / recall@10 0.96;
 extract precision 0.90 / recall 1.0 / citation_validity 1.0; diff
 precision 1.0 / recall 1.0; impact_map precision 0.83 / recall 0.75
 (first live run, gpt-4o-mini — single-run wobble per the README caveat).
-ruff/mypy clean; 345 integration+unit tests green.
+ruff/mypy clean; 347 integration+unit tests green.
 
 ## Open / blocked
 
 - `ANTHROPIC_API_KEY` (owner) — blocks the Anthropic SDK spike.
-- First GitHub Actions run unverified (CI is green locally).
 - DELETE has no retention window; audit_log retention APIs still deferred
   (the tenant-scoped read API landed in W5·B, the `actor` column in W5·C).
 - Auth0 provisioning complete: domain + API + claims Action attached to
   Login (verified 2026-09-07), SPA application registered for W6·A login
-  (callback `http://localhost:3000/callback`, web origin + logout URL
-  `http://localhost:3000`), and per-user `app_metadata.role` assigned
-  (one admin, one reviewer; verified 2026-09-08, live SPA logins seen).
-  Remaining: prod callback/logout URL values, added when the W6·B domain
-  exists.
-- W6·B owner prerequisites (runbook: `infra/README.md` §One-time): S3 state
-  bucket, Cloudflare zone + DNS API token, AWS OIDC deploy role (repo
-  variable `AWS_DEPLOY_ROLE_ARN`), repo variables for the SPA values,
-  `terraform apply`, OpenAI key overwrite in SSM, Auth0 prod callback/logout,
-  then `gh workflow run deploy`. Live smoke + writeup URL numbers after that.
+  (verified live against the prod domain), and per-user
+  `app_metadata.role` assigned (one admin, one reviewer; verified
+  2026-09-08, live SPA logins seen).
+- ECR immutable repos: redeploying the *same* commit sha fails the image
+  push (tag already exists) — redeploys must come from fresh commits;
+  add a push guard to `deploy.yml` if same-sha reruns are ever wanted.
 
 ## Next
 
-**W6·B execution**: owner prerequisites (infra/README.md) → live deploy →
-live smoke + eval numbers against the deployed stack → teardown or
-idle-at-zero per the demo window. Deferred: rate limits, load tests,
-Anthropic spike, retention.
+W6·B executed end to end: owner prerequisites → live deploy → full-flow
+UI smoke against `https://change-report.byraj.dev` (done 2026-09-11;
+runbook §First deploy now documents the counts-before-deploy step).
+Remaining lifecycle: idle-at-zero or `terraform destroy` at the end of
+the demo window. Deferred: rate limits, load tests, Anthropic spike,
+retention, prod CUAD seeding (deliberately skipped — evals stay on the
+local stack), same-sha deploy rerun guard.
 
 ## Gotchas
 
 - Postgres job-status enum types are dropped explicitly in downgrades: table
   drops alone leak them and break re-upgrade.
-- Delete-vs-amend race: an amendment inserted between `has_amendments` and
-  the delete falls through to the RESTRICT FK and surfaces as a 500; to be
-  handled if concurrent-write tests arrive.
+- GitHub repos created on/after 2026-07-15 emit the **immutable OIDC sub
+  claim** (`repo:<owner>@<owner-id>/<repo>@<repo-id>:ref:...`) — the trust
+  policy must match that form, not the legacy name-only form; aud for
+  configure-aws-credentials is `sts.amazonaws.com`, not the issuer URL.
+- RDS db.t4g.micro repeatedly hit `insufficient-capacity` in ap-south-1
+  (Mumbai); db.t4g.small provisions fine.
+- Delete-vs-amend race: deleting a Document now cascades its dependents in
+  one transaction (ingestion/extraction jobs, Chunks, parsed text, the
+  Change Reports naming it as the Amendment, and the Review Items routed
+  from them); the base-with-amendments 409 stands. The residual race — an
+  amendment inserted between `has_amendments` and the delete — still falls
+  through to the RESTRICT FK as a 500; to be handled if concurrent-write
+  tests arrive.
+- Auth0 SPA session restore on refresh needs refresh tokens, not the
+  `prompt=none` iframe: browsers with partitioned third-party cookies
+  block the iframe, which used to drop signed-in users back on the
+  landing page. Wired `useRefreshTokens` + `cacheLocation: "localstorage"`
+  + `offline_access` (providers.tsx); the Auth0 API must keep "Allow
+  Offline Access" on.
 - `get_settings` is lru_cached and auth tests flip `AUTH0_DOMAIN` via env —
   `tests/conftest.py::auth_env` clears the cache around every test; keep
   doing so if other env-driven settings grow knobs.

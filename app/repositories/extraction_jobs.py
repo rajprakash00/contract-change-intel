@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.extraction_job import ExtractionJob, ExtractionJobStatus
@@ -97,3 +97,9 @@ async def mark_failed(session: AsyncSession, job: ExtractionJob, *, error: str) 
     await session.commit()
     await session.refresh(job)
     return job
+
+
+async def delete_for_document(session: AsyncSession, *, document_id: uuid.UUID) -> None:
+    """Delete a document's extraction jobs. No commit: the document-delete
+    sweep commits once at the end."""
+    await session.execute(delete(ExtractionJob).where(ExtractionJob.document_id == document_id))
