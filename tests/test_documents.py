@@ -410,6 +410,53 @@ async def test_delete_document_with_amendments_conflicts_until_amendments_remove
     assert await document_count() == 0
 
 
+async def test_amendment_landing_in_the_delete_race_window_is_409_not_500(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The delete-vs-amend race: an amendment commits between the
+    has_amendments pre-check and the delete, so the RESTRICT FK fires at the
+    delete. The race must read as the documented 409 (parent has
+    amendments), never a raw 500.
+
+    The concurrent insert runs through a second real session inside the
+    patched pre-check hook — no mocks; the wire behaviour stays real."""
+    import app.services.documents as documents_service
+    from app.repositories.documents import has_amendments as real_has_amendments
+
+    tenant_id = uuid.uuid4()
+    headers = bearer(tenant_id)
+    parent = await client.post(
+        "/documents", files={"file": ("msa.txt", b"msa v1", TEXT_MIME)}, headers=headers
+    )
+    assert parent.status_code == 201
+    parent_id = parent.json()["id"]
+
+    async def racy_has_amendments(session: object, *, document_id: uuid.UUID) -> bool:
+        result = await real_has_amendments(session, document_id=document_id)  # type: ignore[arg-type]
+        if not result:
+            # Simulate the concurrent amendment landing in the race window.
+            async with db.get_sessionmaker()() as other:
+                other.add(
+                    Document(
+                        tenant_id=tenant_id,
+                        filename="amd.txt",
+                        mime_type=TEXT_MIME,
+                        sha256=uuid.uuid4().hex,
+                        amends_document_id=parent_id,
+                    )
+                )
+                await other.commit()
+        return result
+
+    monkeypatch.setattr(documents_service.documents_repo, "has_amendments", racy_has_amendments)
+
+    blocked = await client.delete(f"/documents/{parent_id}", headers=headers)
+    assert blocked.status_code == 409, blocked.text
+
+    still_there = await client.get(f"/documents/{parent_id}", headers=headers)
+    assert still_there.status_code == 200
+
+
 async def test_deleting_an_amendment_cascades_to_its_pipeline_rows_and_reports(
     client: AsyncClient,
 ) -> None:

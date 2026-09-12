@@ -294,7 +294,18 @@ async def delete_document(
     await document_texts_repo.delete_for_document(session, document_id=document.id)
     await extraction_jobs_repo.delete_for_document(session, document_id=document.id)
     await ingestion_jobs_repo.delete_for_document(session, document_id=document.id)
-    await documents_repo.delete(session, document)
+    try:
+        await documents_repo.delete(session, document)
+    except IntegrityError:
+        # The RESTRICT FK is the arbiter when an amendment lands in the race
+        # window between has_amendments and the delete. Other FKs into
+        # documents (e.g. change reports naming it as base) fire the same
+        # exception class, so the post-rollback re-check keeps those honest:
+        # 409 only when amendments are really there.
+        await session.rollback()
+        if await documents_repo.has_amendments(session, document_id=document_id):
+            raise DocumentHasAmendmentsError(document_id) from None
+        raise
 
     removed = await asyncio.to_thread(
         local_storage.delete_document, data_dir, tenant_id, document.sha256

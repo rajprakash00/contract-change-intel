@@ -4,7 +4,8 @@ return schema.
 POST /agreements/{id}/change-report names the amendment and returns 202
 immediately: diffing and the LLM explanation call happen in the worker
 process, never in the request path. Status is polled via
-GET /change-report-jobs/{id}.
+GET /change-report-jobs/{id}; GET /agreements/{id}/change-report-jobs
+lists the agreement's full report history, newest first.
 """
 
 import uuid
@@ -41,6 +42,22 @@ async def post_agreement_change_report(
         amended_document_id=request.amendment_document_id,
     )
     return ChangeReportJobRead.model_validate(job)
+
+
+@router.get(
+    "/agreements/{agreement_id}/change-report-jobs",
+    response_model=list[ChangeReportJobRead],
+    responses=_NOT_FOUND_RESPONSE,
+)
+async def get_agreement_change_report_jobs(
+    session: SessionDep,
+    agreement_id: uuid.UUID,
+    principal: PrincipalDep,
+) -> list[ChangeReportJobRead]:
+    jobs = await change_report_service.list_change_report_jobs(
+        session, tenant_id=principal.tenant_id, base_document_id=agreement_id
+    )
+    return [ChangeReportJobRead.model_validate(job) for job in jobs]
 
 
 @router.get(

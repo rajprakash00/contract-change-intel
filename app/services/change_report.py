@@ -20,6 +20,7 @@ unit, and every failure becomes a failed job row, never a raise.
 import enum
 import logging
 import uuid
+from collections.abc import Sequence
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
@@ -200,6 +201,25 @@ async def enqueue_change_report(
         detail={"base_document_id": str(base.id), "amended_document_id": str(amended.id)},
     )
     return job
+
+
+async def list_change_report_jobs(
+    session: AsyncSession, *, tenant_id: uuid.UUID, base_document_id: uuid.UUID
+) -> Sequence[ChangeReportJob]:
+    """Every change report job ever enqueued for the agreement, newest first,
+    each with its status.
+
+    Raises DocumentNotFoundError for unknown ids and other tenants' rows
+    alike.
+    """
+    document = await documents_repo.find_by_id(
+        session, tenant_id=tenant_id, document_id=base_document_id
+    )
+    if document is None:
+        raise DocumentNotFoundError(base_document_id)
+    return await change_report_jobs_repo.list_for_base_document(
+        session, tenant_id=tenant_id, base_document_id=base_document_id
+    )
 
 
 async def get_change_report_job(

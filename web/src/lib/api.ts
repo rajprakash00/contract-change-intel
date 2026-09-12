@@ -117,6 +117,12 @@ export function createApi(getAccessToken: TokenGetter) {
       return request<ChangeReportJobRead>(`/change-report-jobs/${jobId}`);
     },
 
+    listChangeReportJobs(agreementId: string) {
+      return request<ChangeReportJobRead[]>(
+        `/agreements/${agreementId}/change-report-jobs`,
+      );
+    },
+
     listReviewItems(status?: ReviewItemStatus) {
       const suffix = status ? `?status=${status}` : "";
       return request<ReviewItemsResponse>(`/review-items${suffix}`);

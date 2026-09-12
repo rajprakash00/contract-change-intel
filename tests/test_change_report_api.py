@@ -10,6 +10,7 @@ the first missing job.
 import json
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import AsyncClient
@@ -17,7 +18,7 @@ from sqlalchemy import delete
 
 import app.db as db
 from app.models.audit_log import AuditLog
-from app.models.change_report_job import ChangeReportJob
+from app.models.change_report_job import ChangeReportJob, ChangeReportJobStatus
 from app.models.document import Document, DocumentStatus
 from app.models.document_text import DocumentText
 from app.models.extraction_job import ExtractionJob, ExtractionJobStatus
@@ -83,6 +84,32 @@ async def make_ready_pair(client: AsyncClient, tenant_id: uuid.UUID) -> tuple[di
             )
         await session.commit()
     return base, amended
+
+
+async def make_ready(client: AsyncClient, tenant_id: uuid.UUID, document_id: str) -> None:
+    """Mark one document parsed with a completed extraction job + parsed text."""
+    sessionmaker = db.get_sessionmaker()
+    async with sessionmaker() as session:
+        document = await session.get(Document, uuid.UUID(document_id))
+        assert document is not None
+        document.status = DocumentStatus.parsed
+        session.add(
+            ExtractionJob(
+                tenant_id=tenant_id,
+                document_id=document.id,
+                status=ExtractionJobStatus.completed,
+                result={},
+            )
+        )
+        session.add(
+            DocumentText(
+                document_id=document.id,
+                tenant_id=tenant_id,
+                text=BASE_TEXT,
+                page_map=[],
+            )
+        )
+        await session.commit()
 
 
 def body(amendment_id: str) -> dict:
@@ -212,6 +239,62 @@ async def test_get_change_report_job_is_tenant_scoped(client: AsyncClient) -> No
 
     assert stranger.status_code == 404
     assert missing.status_code == 404
+
+
+async def test_list_change_report_jobs_returns_every_job_newest_first_with_status(
+    client: AsyncClient,
+) -> None:
+    tenant_id = uuid.uuid4()
+    headers = bearer(tenant_id)
+    base, amended = await make_ready_pair(client, tenant_id)
+    second = await make_document(client, tenant_id, amends=base["id"])
+    await make_ready(client, tenant_id, second["id"])
+    first = await client.post(
+        f"/agreements/{base['id']}/change-report", json=body(amended["id"]), headers=headers
+    )
+    second_job = await client.post(
+        f"/agreements/{base['id']}/change-report", json=body(second["id"]), headers=headers
+    )
+    assert first.status_code == 202 and second_job.status_code == 202
+    sessionmaker = db.get_sessionmaker()
+    async with sessionmaker() as session:
+        older = await session.get(ChangeReportJob, uuid.UUID(first.json()["id"]))
+        assert older is not None
+        older.created_at = datetime.now(UTC) - timedelta(seconds=10)
+        completed = await session.get(ChangeReportJob, uuid.UUID(second_job.json()["id"]))
+        assert completed is not None
+        completed.status = ChangeReportJobStatus.completed
+        await session.commit()
+
+    response = await client.get(f"/agreements/{base['id']}/change-report-jobs", headers=headers)
+
+    assert response.status_code == 200
+    jobs = response.json()
+    assert [j["id"] for j in jobs] == [second_job.json()["id"], first.json()["id"]]
+    assert [j["status"] for j in jobs] == ["completed", "queued"]
+
+
+async def test_list_change_report_jobs_is_tenant_scoped(client: AsyncClient) -> None:
+    tenant_id = uuid.uuid4()
+    headers = bearer(tenant_id)
+    base, amended = await make_ready_pair(client, tenant_id)
+    enqueued = await client.post(
+        f"/agreements/{base['id']}/change-report", json=body(amended["id"]), headers=headers
+    )
+    assert enqueued.status_code == 202
+
+    stranger = await client.get(
+        f"/agreements/{base['id']}/change-report-jobs", headers=bearer(uuid.uuid4())
+    )
+    unknown = await client.get(f"/agreements/{uuid.uuid4()}/change-report-jobs", headers=headers)
+
+    assert stranger.status_code == 404
+    assert unknown.status_code == 404
+
+
+async def test_list_change_report_jobs_requires_bearer_token(client: AsyncClient) -> None:
+    response = await client.get(f"/agreements/{uuid.uuid4()}/change-report-jobs")
+    assert response.status_code == 401
 
 
 async def test_post_requires_bearer_token(client: AsyncClient) -> None:
