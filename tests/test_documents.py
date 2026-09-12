@@ -525,9 +525,9 @@ async def test_deleting_an_amendment_cascades_to_its_pipeline_rows_and_reports(
         assert await session.get(DocumentText, amendment_id) is None
         amendment_chunks = (
             await session.execute(
-                select(func.count()).select_from(DocumentChunk).where(
-                    DocumentChunk.document_id == amendment_id
-                )
+                select(func.count())
+                .select_from(DocumentChunk)
+                .where(DocumentChunk.document_id == amendment_id)
             )
         ).scalar_one()
         assert amendment_chunks == 0
@@ -537,9 +537,9 @@ async def test_deleting_an_amendment_cascades_to_its_pipeline_rows_and_reports(
         assert await session.get(IngestionJob, parent_job.id) is not None
         parent_chunks = (
             await session.execute(
-                select(func.count()).select_from(DocumentChunk).where(
-                    DocumentChunk.document_id == parent_id
-                )
+                select(func.count())
+                .select_from(DocumentChunk)
+                .where(DocumentChunk.document_id == parent_id)
             )
         ).scalar_one()
         assert parent_chunks == 1
