@@ -101,8 +101,10 @@ standalone, build-time NEXT_PUBLIC_* args) + `.dockerignore` +
 container. CI: `deploy.yml` (dispatch-only) OIDC → ECR push → migration
 run-task → service rollout; `ci.yml` image job builds both artifacts.
 `infra/README.md` is the runbook; `docs/writeup.md` is the milestone
-writeup with the baseline eval numbers and limitations. The actual apply +
-live deploy await the owner prerequisites (runbook §One-time).
+writeup with the baseline eval numbers and limitations. Deployed live
+2026-09-11 at `https://change-report.byraj.dev` (full flow verified via
+UI: login, upload, ingest, extract, amendment change report); first apply
+hit ap-south-1 db.t4g.micro insufficient-capacity → db.t4g.small.
 
 `OPENAI_API_KEY` live and verified end to end; the 6 CUAD fixtures are
 ingested in the dev DB under the eval tenant.
@@ -116,33 +118,37 @@ ruff/mypy clean; 345 integration+unit tests green.
 ## Open / blocked
 
 - `ANTHROPIC_API_KEY` (owner) — blocks the Anthropic SDK spike.
-- First GitHub Actions run unverified (CI is green locally).
 - DELETE has no retention window; audit_log retention APIs still deferred
   (the tenant-scoped read API landed in W5·B, the `actor` column in W5·C).
 - Auth0 provisioning complete: domain + API + claims Action attached to
   Login (verified 2026-09-07), SPA application registered for W6·A login
-  (callback `http://localhost:3000/callback`, web origin + logout URL
-  `http://localhost:3000`), and per-user `app_metadata.role` assigned
-  (one admin, one reviewer; verified 2026-09-08, live SPA logins seen).
-  Remaining: prod callback/logout URL values, added when the W6·B domain
-  exists.
-- W6·B owner prerequisites (runbook: `infra/README.md` §One-time): S3 state
-  bucket, Cloudflare zone + DNS API token, AWS OIDC deploy role (repo
-  variable `AWS_DEPLOY_ROLE_ARN`), repo variables for the SPA values,
-  `terraform apply`, OpenAI key overwrite in SSM, Auth0 prod callback/logout,
-  then `gh workflow run deploy`. Live smoke + writeup URL numbers after that.
+  (verified live against the prod domain), and per-user
+  `app_metadata.role` assigned (one admin, one reviewer; verified
+  2026-09-08, live SPA logins seen).
+- ECR immutable repos: redeploying the *same* commit sha fails the image
+  push (tag already exists) — redeploys must come from fresh commits;
+  add a push guard to `deploy.yml` if same-sha reruns are ever wanted.
 
 ## Next
 
-**W6·B execution**: owner prerequisites (infra/README.md) → live deploy →
-live smoke + eval numbers against the deployed stack → teardown or
-idle-at-zero per the demo window. Deferred: rate limits, load tests,
-Anthropic spike, retention.
+W6·B executed end to end: owner prerequisites → live deploy → full-flow
+UI smoke against `https://change-report.byraj.dev` (done 2026-09-11;
+runbook §First deploy now documents the counts-before-deploy step).
+Remaining lifecycle: idle-at-zero or `terraform destroy` at the end of
+the demo window. Deferred: rate limits, load tests, Anthropic spike,
+retention, prod CUAD seeding (deliberately skipped — evals stay on the
+local stack), same-sha deploy rerun guard.
 
 ## Gotchas
 
 - Postgres job-status enum types are dropped explicitly in downgrades: table
   drops alone leak them and break re-upgrade.
+- GitHub repos created on/after 2026-07-15 emit the **immutable OIDC sub
+  claim** (`repo:<owner>@<owner-id>/<repo>@<repo-id>:ref:...`) — the trust
+  policy must match that form, not the legacy name-only form; aud for
+  configure-aws-credentials is `sts.amazonaws.com`, not the issuer URL.
+- RDS db.t4g.micro repeatedly hit `insufficient-capacity` in ap-south-1
+  (Mumbai); db.t4g.small provisions fine.
 - Delete-vs-amend race: an amendment inserted between `has_amendments` and
   the delete falls through to the RESTRICT FK and surfaces as a 500; to be
   handled if concurrent-write tests arrive.
