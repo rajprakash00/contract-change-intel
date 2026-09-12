@@ -18,7 +18,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.repositories.audit_log as audit_repo
+import app.repositories.change_report_jobs as change_report_jobs_repo
+import app.repositories.document_chunks as document_chunks_repo
+import app.repositories.document_texts as document_texts_repo
 import app.repositories.documents as documents_repo
+import app.repositories.extraction_jobs as extraction_jobs_repo
+import app.repositories.ingestion_jobs as ingestion_jobs_repo
+import app.repositories.review_items as review_items_repo
 import app.storage.local as local_storage
 from app.models.document import Document
 from app.request_context import current_actor, current_request_id
@@ -275,6 +281,19 @@ async def delete_document(
     # and the chain deletion explicit (leaf first).
     if await documents_repo.has_amendments(session, document_id=document_id):
         raise DocumentHasAmendmentsError(document_id)
+    # Chain deletion, one transaction: every helper joins the transaction
+    # documents_repo.delete commits. Review Items routed from the deleted
+    # Change Reports go with them — their document_id is the base, so only
+    # the job reference identifies them.
+    report_ids = await change_report_jobs_repo.delete_for_amendment(
+        session, amended_document_id=document.id
+    )
+    await review_items_repo.delete_for_jobs(session, job_ids=report_ids)
+    await review_items_repo.delete_for_document(session, document_id=document.id)
+    await document_chunks_repo.delete_for_document(session, document_id=document.id)
+    await document_texts_repo.delete_for_document(session, document_id=document.id)
+    await extraction_jobs_repo.delete_for_document(session, document_id=document.id)
+    await ingestion_jobs_repo.delete_for_document(session, document_id=document.id)
     await documents_repo.delete(session, document)
 
     removed = await asyncio.to_thread(

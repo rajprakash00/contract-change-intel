@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ingestion_job import IngestionJob, IngestionJobStatus
@@ -88,3 +88,9 @@ async def mark_failed(session: AsyncSession, job: IngestionJob, *, error: str) -
     await session.commit()
     await session.refresh(job)
     return job
+
+
+async def delete_for_document(session: AsyncSession, *, document_id: uuid.UUID) -> None:
+    """Delete a document's ingestion jobs. No commit: the document-delete
+    sweep commits once at the end."""
+    await session.execute(delete(IngestionJob).where(IngestionJob.document_id == document_id))

@@ -1,8 +1,9 @@
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.review_item import ReviewItem, ReviewItemSource, ReviewItemStatus
@@ -88,3 +89,18 @@ async def resolve(
     )
     await session.commit()
     return result.scalar_one_or_none()
+
+
+async def delete_for_document(session: AsyncSession, *, document_id: uuid.UUID) -> None:
+    """Delete the Review Items concerning one document (extraction-sourced
+    items). No commit: the document-delete sweep commits once at the end."""
+    await session.execute(delete(ReviewItem).where(ReviewItem.document_id == document_id))
+
+
+async def delete_for_jobs(session: AsyncSession, *, job_ids: Sequence[uuid.UUID]) -> None:
+    """Delete the Review Items routed from the named jobs — the impact
+    mappings that came from Change Reports about to be deleted. No commit:
+    same sweep as above."""
+    if not job_ids:
+        return
+    await session.execute(delete(ReviewItem).where(ReviewItem.job_id.in_(job_ids)))

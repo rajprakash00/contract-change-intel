@@ -106,3 +106,9 @@ async def rank_by_full_text(
         .limit(limit)
     )
     return [(chunk, document) for chunk, document in result.all()]
+
+
+async def delete_for_document(session: AsyncSession, *, document_id: uuid.UUID) -> None:
+    """Delete a document's Chunks. No commit: the document-delete sweep
+    commits once at the end."""
+    await session.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document_id))

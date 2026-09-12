@@ -36,3 +36,9 @@ async def replace(
     session.add(row)
     await session.flush()
     return row
+
+
+async def delete_for_document(session: AsyncSession, *, document_id: uuid.UUID) -> None:
+    """Delete a document's parsed text. No commit: the document-delete sweep
+    commits once at the end."""
+    await session.execute(delete(DocumentText).where(DocumentText.document_id == document_id))
