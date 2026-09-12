@@ -8,12 +8,15 @@ import {
 } from "@tanstack/react-table";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Check, Pencil, X } from "lucide-react";
+import Link from "next/link";
+import { ArrowRight, Check, Pencil, X } from "lucide-react";
 
 import { errorMessage } from "@/lib/api";
 import { useApi } from "@/lib/api-context";
+import { reviewPayloadFields } from "@/lib/review-payload";
 import { Disposition, ReviewItemRead, ReviewItemStatus } from "@/lib/types";
 import { DataTable, EmptyState, TableSkeleton } from "@/components/data-table";
+import { ChangeKindBadge, SeverityBadge } from "@/components/status-badges";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -85,7 +88,7 @@ export default function ReviewQueuePage() {
       }),
       columnHelper.accessor("payload", {
         header: "Item",
-        cell: (info) => <PayloadSummary payload={info.getValue()} />,
+        cell: (info) => <ReviewItemCell item={info.row.original} />,
       }),
       columnHelper.accessor("confidence", {
         header: "Confidence",
@@ -196,13 +199,73 @@ export default function ReviewQueuePage() {
   );
 }
 
-// The queue must show *something* for each item without knowing every payload
-// shape; render the JSON compactly (thin UI, primitives over abstractions).
-function PayloadSummary({ payload }: { payload: Record<string, unknown> }) {
+// The queue renders structured fields — the affected Obligation plus, for
+// impact items, the Change that triggered them (enriched at routing time,
+// issue #21). Legacy rows without the enriched payload still render the
+// obligation; unrecognized payload shapes fall back to the compact JSON dump
+// so every item shows something.
+function ReviewItemCell({ item }: { item: ReviewItemRead }) {
+  const fields = reviewPayloadFields(item.item_type, item.payload);
+
+  if (fields.kind === "unknown") {
+    return (
+      <span className="line-clamp-2 max-w-md font-mono text-xs text-muted-foreground">
+        {JSON.stringify(fields.raw)}
+      </span>
+    );
+  }
+
+  const obligation =
+    fields.kind === "impact"
+      ? fields.obligation
+      : fields.kind === "obligation"
+        ? {
+            clauseRef: fields.clauseRef,
+            description: fields.description,
+            owner: fields.owner,
+          }
+        : null;
+
   return (
-    <span className="line-clamp-2 max-w-md font-mono text-xs text-muted-foreground">
-      {JSON.stringify(payload)}
-    </span>
+    <div className="max-w-md space-y-1.5">
+      {fields.kind === "impact" && fields.change && (
+        <p className="flex flex-wrap items-center gap-1.5 text-xs">
+          <ChangeKindBadge kind={fields.change.kind} />
+          <SeverityBadge severity={fields.change.severity} />
+          <span className="line-clamp-1 text-muted-foreground">
+            {fields.change.description}
+          </span>
+        </p>
+      )}
+      {obligation && (
+        <div>
+          <span className="font-mono text-xs text-muted-foreground">
+            {obligation.clauseRef}
+            {obligation.owner ? ` · ${obligation.owner}` : ""}
+          </span>
+          <p className="line-clamp-2 text-sm leading-relaxed">{obligation.description}</p>
+        </div>
+      )}
+      {fields.kind === "defined_term" && (
+        <div>
+          <span className="font-mono text-xs text-muted-foreground">
+            {fields.term}
+          </span>
+          <p className="line-clamp-2 text-sm leading-relaxed">
+            {fields.definition}
+          </p>
+        </div>
+      )}
+      {fields.kind === "impact" && (
+        <Link
+          href={`/change-report-jobs/${item.job_id}`}
+          className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+        >
+          View change report
+          <ArrowRight className="size-3" aria-hidden />
+        </Link>
+      )}
+    </div>
   );
 }
 

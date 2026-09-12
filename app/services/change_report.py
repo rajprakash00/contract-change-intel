@@ -340,8 +340,8 @@ async def run_next_change_report_job(
     await change_report_jobs_repo.mark_completed(session, job, result=result)
     logger.info("change report job completed tenant=%s job=%s", job.tenant_id, job.id)
     review_candidates = [
-        ("impact", impact, impact["confidence"])
-        for change_impacts in impacts
+        ("impact", {**impact, "change": _review_change(change, explanation)}, impact["confidence"])
+        for change, explanation, change_impacts in zip(changes, explanations, impacts, strict=True)
         for impact in change_impacts
     ]
     await review_queue.route_for_review(
@@ -388,6 +388,20 @@ def _impact_query(change: Change, base_text: str, amended_text: str) -> str | No
         return None
     text = amended_text if change.amended_span is not None else base_text
     return text[span.char_start : span.char_end][:EXCERPT_LIMIT]
+
+
+def _review_change(change: Change, explanation: ChangeExplanation) -> dict[str, Any]:
+    """The source Change a routed Impact came from, wire-shaped for the
+    review item payload (issue #21): the reviewer sees kind, clause, severity
+    and the model's description next to the affected Obligation, and the job
+    reference on the row deep-links to the report. The report's own result is
+    not enriched — this context exists only on the review side."""
+    return {
+        "kind": change.kind.value,
+        "clause_ref": change.clause_ref,
+        "severity": explanation.severity.value,
+        "description": explanation.description,
+    }
 
 
 async def _map_impacts(

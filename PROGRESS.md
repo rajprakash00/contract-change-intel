@@ -104,7 +104,18 @@ run-task → service rollout; `ci.yml` image job builds both artifacts.
 writeup with the baseline eval numbers and limitations. Deployed live
 2026-09-11 at `https://change-report.byraj.dev` (full flow verified via
 UI: login, upload, ingest, extract, amendment change report); first apply
-hit ap-south-1 db.t4g.micro insufficient-capacity → db.t4g.small.
+hit ap-south-1 db.t4g.micro insufficient-capacity → db.t4g.small. ·
+Post-deploy polish (issues #19–#21): font tokens fixed — body renders
+Geist Sans (the token no longer self-references), duplicate
+heading/serif tokens collapsed to one `--font-heading`, base type 17px;
+custom SVG brand mark + favicon replace the stock assets and the dead
+create-next-app SVGs are gone; a static landing page is the entry state
+for logged-out visitors (no auto-redirect — both CTAs trigger the PKCE
+redirect, signed-in users skip straight to the app); impact review items
+carry the source Change in their payload (enriched at routing time,
+`change` = kind/clause_ref/severity/description) and the queue renders
+structured obligation + change fields with a deep-link to the change
+report — legacy rows without the enrichment still render the obligation.
 
 `OPENAI_API_KEY` live and verified end to end; the 6 CUAD fixtures are
 ingested in the dev DB under the eval tenant.
@@ -113,7 +124,7 @@ Baselines (`evals/baselines/`): retrieve recall@5 0.82 / recall@10 0.96;
 extract precision 0.90 / recall 1.0 / citation_validity 1.0; diff
 precision 1.0 / recall 1.0; impact_map precision 0.83 / recall 0.75
 (first live run, gpt-4o-mini — single-run wobble per the README caveat).
-ruff/mypy clean; 345 integration+unit tests green.
+ruff/mypy clean; 347 integration+unit tests green.
 
 ## Open / blocked
 

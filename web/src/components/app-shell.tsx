@@ -8,6 +8,8 @@ import { FileDiff, LogOut, ScrollText } from "lucide-react";
 import { roleFromClaims } from "@/lib/roles";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { BrandMark } from "@/components/brand";
+import { LandingPage } from "@/components/landing";
 
 const NAV_ITEMS = [
   { href: "/", label: "Documents", icon: FileDiff },
@@ -19,11 +21,35 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const role = roleFromClaims(user);
 
+  // The PKCE callback completes outside the app shell — it has no session yet.
+  if (pathname === "/callback") {
+    return <>{children}</>;
+  }
+
+  // Signed-in users skip straight to the app; a logged-out visitor gets the
+  // landing page (issue #20) — no auto-redirect to the identity provider.
+  // While the SDK resolves the session, hold on a bare splash so a signed-in
+  // visitor never sees the landing page flash.
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <BrandMark className="size-10 rounded-lg opacity-80" />
+      </div>
+    );
+  }
+  if (!isAuthenticated) {
+    return <LandingPage onSignIn={() => loginWithRedirect()} />;
+  }
+
   return (
     <div className="flex min-h-screen flex-col">
       <header className="border-b bg-card">
         <div className="mx-auto flex h-16 w-full max-w-6xl items-center gap-8 px-6">
-          <Link href="/" className="font-serif text-lg font-semibold tracking-tight">
+          <Link
+            href="/"
+            className="flex items-center gap-2.5 font-heading text-lg font-semibold tracking-tight"
+          >
+            <BrandMark className="size-7 rounded-md" />
             Contract Change-Impact Intelligence
           </Link>
           <nav className="flex items-center gap-1">
