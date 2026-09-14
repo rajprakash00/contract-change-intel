@@ -13,7 +13,7 @@ import uuid
 from fastapi import APIRouter, status
 
 import app.services.change_report as change_report_service
-from app.api.deps import AdminPrincipal, PrincipalDep, SessionDep
+from app.api.deps import AdminPrincipal, ChangeReportRateLimit, PrincipalDep, SessionDep
 from app.schemas.change_report import ChangeReportCreate, ChangeReportJobRead
 
 router = APIRouter(tags=["change-reports"])
@@ -34,6 +34,7 @@ async def post_agreement_change_report(
     agreement_id: uuid.UUID,
     request: ChangeReportCreate,
     principal: AdminPrincipal,
+    _: ChangeReportRateLimit,
 ) -> ChangeReportJobRead:
     job = await change_report_service.enqueue_change_report(
         session,
