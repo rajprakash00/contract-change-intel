@@ -125,7 +125,15 @@ view, light polling while unsettled; the delete-vs-amend race (an
 amendment landing between the `has_amendments` pre-check and the delete)
 now surfaces as the documented 409 through the central error table
 instead of a raw 500 — the service converts the RESTRICT FK
-IntegrityError to `DocumentHasAmendmentsError`.
+IntegrityError to `DocumentHasAmendmentsError`. · Per-tenant rate
+limiting (#24, ADR-010): the two LLM-enqueue POSTs spend a per-tenant
+per-hour budget (settings knobs, `limits` library over in-process
+MemoryStorage, one shared limiter per process) as a FastAPI dependency
+resolved after the admin gate; exhausted budgets answer 429 with
+Retry-After through the central error table, budgets are keyed
+(kind, tenant) with the amount in the key, and the Redis-backed shared
+storage is documented as the deliberate multi-replica scaling step
+(ADR-010), not built.
 
 `OPENAI_API_KEY` live and verified end to end; the 6 CUAD fixtures are
 ingested in the dev DB under the eval tenant.

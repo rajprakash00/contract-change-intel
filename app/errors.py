@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 from app.auth.jwks import JwksUnavailableError
 from app.auth.verifier import AuthenticationError, AuthNotConfiguredError, AuthorizationError
 from app.llm.client import LlmCallError, LlmNotConfiguredError, LlmOutputError
+from app.ratelimit import RateLimitExceededError
 from app.schemas.change_report import ChangePrerequisiteDetail
 from app.schemas.documents import DocumentConflictDetail
 from app.schemas.extraction import DocumentNotParsedDetail
@@ -171,6 +172,16 @@ async def _jwks_unavailable(_: Request, exc: JwksUnavailableError) -> JSONRespon
     return _detail_response(status.HTTP_502_BAD_GATEWAY, str(exc))
 
 
+async def _rate_limit_exceeded(_: Request, exc: RateLimitExceededError) -> JSONResponse:
+    # The tenant spent its LLM budget: not an error in this service, and not a
+    # missing resource — 429, retryable when the tenant's window resets.
+    return JSONResponse(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        content={"detail": str(exc)},
+        headers={"Retry-After": str(exc.retry_after_seconds)},
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     app.exception_handler(AuthenticationError)(_authentication_error)
     app.exception_handler(AuthorizationError)(_authorization_error)
@@ -194,3 +205,4 @@ def register_exception_handlers(app: FastAPI) -> None:
     app.exception_handler(LlmCallError)(_llm_call_error)
     app.exception_handler(LlmOutputError)(_llm_output_error)
     app.exception_handler(LlmNotConfiguredError)(_llm_not_configured)
+    app.exception_handler(RateLimitExceededError)(_rate_limit_exceeded)

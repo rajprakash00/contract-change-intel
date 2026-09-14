@@ -38,6 +38,12 @@ class Settings(BaseSettings):
     # this only bounds how hard it tries before surfacing an LlmError.
     openai_max_retries: int = 2
 
+    # Per-tenant rate limits on the LLM-enqueue endpoints (ADR-010): budgets
+    # per endpoint kind, enforced in-process over a fixed one-hour window
+    # (limits library). 0 blocks all calls for that kind.
+    rate_limit_extraction_per_hour: int = 60
+    rate_limit_change_report_per_hour: int = 60
+
     # W5·A review queue: LLM output whose Confidence falls strictly below the
     # per-job-kind threshold is routed to human review as a pending item.
     review_confidence_threshold_extraction: float = 0.7

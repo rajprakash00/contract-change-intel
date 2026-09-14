@@ -9,7 +9,7 @@ import uuid
 from fastapi import APIRouter, status
 
 import app.services.extraction as extraction_service
-from app.api.deps import AdminPrincipal, PrincipalDep, SessionDep
+from app.api.deps import AdminPrincipal, ExtractionRateLimit, PrincipalDep, SessionDep
 from app.schemas.extraction import ExtractionJobRead
 
 router = APIRouter(tags=["extraction"])
@@ -29,6 +29,7 @@ async def post_document_extraction(
     session: SessionDep,
     document_id: uuid.UUID,
     principal: AdminPrincipal,
+    _: ExtractionRateLimit,
 ) -> ExtractionJobRead:
     job = await extraction_service.enqueue_extraction(
         session, tenant_id=principal.tenant_id, document_id=document_id

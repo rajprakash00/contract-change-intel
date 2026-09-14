@@ -6,6 +6,7 @@ from typing import Annotated, Any
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import ratelimit
 from app.auth.jwks import JwksClient
 from app.auth.verifier import (
     AuthenticationError,
@@ -96,3 +97,19 @@ def require_role(*allowed: Role) -> Callable[..., Coroutine[Any, Any, Principal]
 # any authenticated principal of the tenant named in the token.
 AdminPrincipal = Annotated[Principal, Depends(require_role(Role.ADMIN))]
 ReviewerPrincipal = Annotated[Principal, Depends(require_role(Role.REVIEWER, Role.ADMIN))]
+
+
+def llm_rate_limit(kind: ratelimit.Kind) -> Callable[..., Coroutine[Any, Any, None]]:
+    """Dependency factory spending the tenant's budget for one endpoint kind
+    (ADR-010); 429 with Retry-After once the budget is spent. Depending on
+    AdminPrincipal directly keeps the role check ahead of the spend."""
+
+    async def enforce(settings: SettingsDep, principal: AdminPrincipal) -> None:
+        ratelimit.enforce(kind, str(principal.tenant_id), settings)
+
+    return enforce
+
+
+# Two real uses: the LLM-enqueue POSTs. Non-enqueue endpoints stay unlimited.
+ExtractionRateLimit = Annotated[None, Depends(llm_rate_limit("extraction"))]
+ChangeReportRateLimit = Annotated[None, Depends(llm_rate_limit("change_report"))]
