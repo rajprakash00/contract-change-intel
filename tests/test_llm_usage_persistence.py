@@ -47,6 +47,7 @@ from tests.fake_openai import (
     fake_llm_client,
     fake_llm_client_queue,
     fake_llm_with_embeddings_client,
+    fake_refusal_client,
 )
 
 BASE_TEXT = "2.1 Delivery\n\nLICENSOR shall deliver within 14 days."
@@ -163,7 +164,11 @@ class TestUsageRepository:
                 tenant_id=tenant_id,
                 job_type=UsageJobKind.extraction,
                 job_id=uuid.uuid4(),
-                usage=usage_record,
+                model=usage_record.model,
+                prompt_tokens=usage_record.prompt_tokens,
+                completion_tokens=usage_record.completion_tokens,
+                cost_usd=usage_record.cost_usd,
+                latency_ms=usage_record.latency_ms,
                 request_id="req-1",
             )
 
@@ -306,6 +311,25 @@ class TestExtractionPersistence:
             await run_next_extraction_job(s, llm=llm, review_threshold=0.8)
 
         assert len(await tenant_usage_rows(tenant_id)) == 2, "one row per call, retries included"
+
+    async def test_refused_call_still_persists_the_tokens_it_spent(self) -> None:
+        """A refusal is a logged LLM call whose tokens were spent: the job
+        fails and its usage row lands anyway — the contracts never diverge."""
+        tenant_id = uuid.uuid4()
+        document = await make_text_document(tenant_id, text="0123456789")
+        async with session() as s:
+            job = await enqueue_extraction(s, tenant_id=tenant_id, document_id=document.id)
+
+        async with fake_refusal_client() as (llm, _), session() as s:
+            ran = await run_next_extraction_job(s, llm=llm, review_threshold=0.8)
+
+        assert ran is True
+        rows = await tenant_usage_rows(tenant_id)
+        assert len(rows) == 1
+        assert rows[0].job_type is UsageJobKind.extraction
+        assert rows[0].job_id == job.id
+        assert rows[0].prompt_tokens == 7
+        assert rows[0].completion_tokens == 3
 
 
 class TestIngestionPersistence:

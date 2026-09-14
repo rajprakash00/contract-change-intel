@@ -15,7 +15,9 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.repositories.document_chunks as chunks_repo
+import app.services.usage as usage_service
 from app.llm.client import OpenAiClient, UsageSink
+from app.models.llm_usage import UsageJobKind
 
 # ADR-006: fixed, not tunable, until eval numbers justify a change.
 RRF_K = 60
@@ -69,14 +71,14 @@ async def search(
     tenant_id: uuid.UUID,
     query: str,
     limit: int,
-    usage_sink: UsageSink | None = None,
 ) -> list[SearchHit]:
     """Hybrid search over one tenant's corpus (ADR-006): embed the query, rank
     chunks by vector similarity and by full-text match, fuse both rankings with
     RRF, and return the top `limit` as citation-spanned hits.
 
     Cross-document by design: impact mapping must recall obligations across the
-    tenant's whole corpus, not just within one document. Raises LlmCallError /
+    tenant's whole corpus, not just within one document. The query embed is
+    accounted under the search surface (no job row). Raises LlmCallError /
     LlmNotConfiguredError from the query embedding; the app-wide error table
     maps those to 502/503.
     """
@@ -87,7 +89,9 @@ async def search(
         document_id=None,
         query=query,
         limit=limit,
-        usage_sink=usage_sink,
+        usage_sink=usage_service.sink(
+            session, tenant_id=tenant_id, job_type=UsageJobKind.search, job_id=None
+        ),
     )
 
 

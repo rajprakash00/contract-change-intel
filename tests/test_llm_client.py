@@ -25,10 +25,15 @@ from tests.fake_openai import (
     completion_body,
     fake_embedding_client,
     fake_llm_client,
+    fake_refusal_client,
     fake_streaming_llm_client,
     make_settings,
     tool_call_body,
 )
+
+
+class Answer(BaseModel):
+    value: int
 
 
 class TestConfiguration:
@@ -384,9 +389,6 @@ class TestUsageRecords:
         assert result.latency_ms >= 0
 
     async def test_complete_structured_returns_data_with_usage_record(self) -> None:
-        class Answer(BaseModel):
-            value: int
-
         async with fake_llm_client(
             json.dumps({"value": 2}), prompt_tokens=100, completion_tokens=20
         ) as (client, _):
@@ -400,6 +402,17 @@ class TestUsageRecords:
         assert result.usage.cost_usd == pytest.approx(0.000027)
         assert isinstance(result.usage.latency_ms, int)
         assert result.usage.latency_ms >= 0
+
+    async def test_refusal_raises_with_the_usage_it_burned(self) -> None:
+        async with fake_refusal_client(prompt_tokens=7, completion_tokens=3) as (client, _):
+            with pytest.raises(LlmOutputError) as excinfo:
+                await client.complete_structured(Answer, system="s", user="u")
+
+        usage = excinfo.value.usage
+        assert usage is not None, "a refusal's tokens are spent and must be accountable"
+        assert usage.model == "gpt-4o-mini"
+        assert usage.prompt_tokens == 7
+        assert usage.completion_tokens == 3
 
     async def test_embed_returns_vectors_with_usage_record(self) -> None:
         async with fake_embedding_client([[1.0]], prompt_tokens=1_000_000) as (client, _):

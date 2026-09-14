@@ -341,6 +341,7 @@ async def run_next_change_report_job(
             "change report job failed tenant=%s job=%s reason=%s", job.tenant_id, job.id, exc
         )
         await change_report_jobs_repo.mark_failed(session, job, error=str(exc))
+        await usage_service.account_rejected_output(exc, usage_sink)
         return True
     result = {
         "changes": [

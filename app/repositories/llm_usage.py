@@ -8,7 +8,6 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.llm.client import LlmUsage
 from app.models.llm_usage import LlmUsageRecord, UsageJobKind
 
 
@@ -36,7 +35,11 @@ async def record(
     tenant_id: uuid.UUID,
     job_type: UsageJobKind,
     job_id: uuid.UUID | None,
-    usage: LlmUsage,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    cost_usd: float,
+    latency_ms: int,
     request_id: str,
 ) -> None:
     session.add(
@@ -44,11 +47,11 @@ async def record(
             tenant_id=tenant_id,
             job_type=job_type,
             job_id=job_id,
-            model=usage.model,
-            prompt_tokens=usage.prompt_tokens,
-            completion_tokens=usage.completion_tokens,
-            cost_usd=usage.cost_usd,
-            latency_ms=usage.latency_ms,
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost_usd=cost_usd,
+            latency_ms=latency_ms,
             request_id=request_id,
         )
     )

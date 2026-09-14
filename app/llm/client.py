@@ -48,6 +48,18 @@ def _redact(arguments: dict[str, Any]) -> str:
     return rendered
 
 
+@dataclass(frozen=True)
+class LlmUsage:
+    """The usage facts of one completed call: what it cost in tokens, USD, and
+    wall time. Produced where the call happens so callers can persist it."""
+
+    model: str
+    prompt_tokens: int
+    completion_tokens: int
+    cost_usd: float
+    latency_ms: int
+
+
 class LlmError(Exception):
     """Base for LLM-layer failures; carries no HTTP semantics."""
 
@@ -66,19 +78,16 @@ class LlmCallError(LlmError):
 
 
 class LlmOutputError(LlmError):
-    """The model replied but the output failed schema validation."""
+    """The model replied but the output failed schema validation.
 
+    `usage` carries the call's spend when the reply itself was the problem
+    (refusals: the usage arrived with the response) so the caller can still
+    account for tokens the model burned on output nothing was done with.
+    """
 
-@dataclass(frozen=True)
-class LlmUsage:
-    """The usage facts of one completed call: what it cost in tokens, USD, and
-    wall time. Produced where the call happens so callers can persist it."""
-
-    model: str
-    prompt_tokens: int
-    completion_tokens: int
-    cost_usd: float
-    latency_ms: int
+    def __init__(self, message: str, usage: LlmUsage | None = None) -> None:
+        self.usage = usage
+        super().__init__(message)
 
 
 @dataclass(frozen=True)
@@ -213,8 +222,9 @@ class OpenAiClient:
         usage = self._log_usage(self._model, prompt_tokens, completion_tokens, cost, started)
         parsed = response.choices[0].message.parsed
         if parsed is None:
-            # Refusal path: usage arrived with the response, so it is logged.
-            raise LlmOutputError(rejected)
+            # Refusal path: usage arrived with the response, so it is logged
+            # and attached for the caller to persist.
+            raise LlmOutputError(rejected, usage)
         return LlmStructuredResult(data=parsed, usage=usage)
 
     async def embed(self, texts: Sequence[str]) -> LlmEmbeddingResult:

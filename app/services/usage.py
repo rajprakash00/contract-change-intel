@@ -14,7 +14,7 @@ from typing import Literal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.repositories.llm_usage as usage_repo
-from app.llm.client import LlmUsage, UsageSink
+from app.llm.client import LlmOutputError, LlmUsage, UsageSink
 from app.models.llm_usage import UsageJobKind
 from app.repositories.llm_usage import SpendRow
 from app.request_context import current_request_id
@@ -46,11 +46,24 @@ def sink(
             tenant_id=tenant_id,
             job_type=job_type,
             job_id=job_id,
-            usage=usage,
+            model=usage.model,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            cost_usd=usage.cost_usd,
+            latency_ms=usage.latency_ms,
             request_id=current_request_id(),
         )
 
     return record
+
+
+async def account_rejected_output(exc: BaseException, usage_sink: UsageSink) -> None:
+    """Persist the spend attached to a rejected-output error: a refusal's
+    tokens are spent whether or not anything usable came back, so a job
+    failure path must not drop them (one row per logged call)."""
+    usage = exc.usage if isinstance(exc, LlmOutputError) else None
+    if usage is not None:
+        await usage_sink(usage)
 
 
 async def spend(session: AsyncSession, *, tenant_id: uuid.UUID, group_by: GroupBy) -> SpendReport:

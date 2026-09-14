@@ -269,6 +269,9 @@ async def run_next_extraction_job(
         # Claimed past the attempt cap: already terminal, nothing to run.
         logger.warning("extraction job capped tenant=%s job=%s", job.tenant_id, job.id)
         return True
+    usage_sink = usage_service.sink(
+        session, tenant_id=job.tenant_id, job_type=UsageJobKind.extraction, job_id=job.id
+    )
     try:
         document = await documents_repo.find_by_id(
             session, tenant_id=job.tenant_id, document_id=job.document_id
@@ -285,20 +288,14 @@ async def run_next_extraction_job(
                 "extraction requires a completed ingestion"
             )
         extraction = await extract_obligations(
-            llm,
-            document_text=text_row.text,
-            usage_sink=usage_service.sink(
-                session,
-                tenant_id=job.tenant_id,
-                job_type=UsageJobKind.extraction,
-                job_id=job.id,
-            ),
+            llm, document_text=text_row.text, usage_sink=usage_sink
         )
     except (LlmError, ValueError) as exc:
         logger.warning(
             "extraction job failed tenant=%s job=%s reason=%s", job.tenant_id, job.id, exc
         )
         await extraction_jobs_repo.mark_failed(session, job, error=str(exc))
+        await usage_service.account_rejected_output(exc, usage_sink)
         return True
     await extraction_jobs_repo.mark_completed(
         session, job, result=extraction.model_dump(mode="json")

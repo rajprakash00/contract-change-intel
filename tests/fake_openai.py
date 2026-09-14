@@ -220,6 +220,54 @@ async def fake_streaming_llm_client(
         await wire.aclose()
 
 
+def refusal_body(*, prompt_tokens: int = 7, completion_tokens: int = 3) -> dict[str, Any]:
+    """A refusal reply: no content, the refusal text in its field — usage
+    still arrives with the response, so the spend is accountable."""
+    return {
+        "id": "chatcmpl-test",
+        "object": "chat.completion",
+        "created": 1_700_000_000,
+        "model": "gpt-4o-mini",
+        "choices": [
+            {
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "refusal": "I cannot help with that.",
+                },
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+        },
+    }
+
+
+@asynccontextmanager
+async def fake_refusal_client(
+    *, prompt_tokens: int = 7, completion_tokens: int = 3
+) -> AsyncIterator[tuple[OpenAiClient, list[httpx2.Request]]]:
+    """One client whose wire always answers a structured call with a refusal."""
+    requests: list[httpx2.Request] = []
+    payload = refusal_body(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        requests.append(request)
+        return httpx2.Response(200, content=json.dumps(payload).encode())
+
+    wire = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
+    client = OpenAiClient(make_settings(), http_client=wire)
+    try:
+        yield client, requests
+    finally:
+        # OpenAiClient.aclose() skips caller-owned wires; close ours here.
+        await wire.aclose()
+
+
 def embeddings_body(
     vectors: list[list[float]],
     *,

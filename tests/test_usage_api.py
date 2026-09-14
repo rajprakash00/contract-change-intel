@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.db as db
 from app.config import get_settings
-from app.llm.client import LlmUsage
 from app.models.llm_usage import LlmUsageRecord, UsageJobKind
 from app.repositories import llm_usage as usage_repo
 from tests.fake_jwks import bearer
@@ -41,57 +40,70 @@ async def clean_tables() -> AsyncIterator[None]:
         await s.commit()
 
 
+async def seed_call(
+    session: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    job_type: UsageJobKind,
+    job_id: uuid.UUID | None = None,
+    model: str = "gpt-4o-mini",
+    prompt_tokens: int = 100,
+    completion_tokens: int = 20,
+    cost_usd: float = 0.01,
+    latency_ms: int = 250,
+) -> None:
+    await usage_repo.record(
+        session,
+        tenant_id=tenant_id,
+        job_type=job_type,
+        job_id=job_id,
+        model=model,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        cost_usd=cost_usd,
+        latency_ms=latency_ms,
+        request_id="",
+    )
+
+
 async def seed_spend(tenant_id: uuid.UUID, *, other: uuid.UUID) -> None:
     """Extraction calls on one job, one ingestion call, one search call, and
     one other tenant's extraction call."""
     job_id = uuid.uuid4()
     async with session() as s:
         for _ in range(2):
-            await usage_repo.record(
-                s,
-                tenant_id=tenant_id,
-                job_type=UsageJobKind.extraction,
-                job_id=job_id,
-                usage=LlmUsage(
-                    model="gpt-4o-mini",
-                    prompt_tokens=100,
-                    completion_tokens=20,
-                    cost_usd=0.01,
-                    latency_ms=250,
-                ),
-                request_id="",
-            )
-        for job_type, tokens, cost in (
-            (UsageJobKind.ingestion, 120, 0.002),
-            (UsageJobKind.search, 1, 0.000001),
-        ):
-            await usage_repo.record(
-                s,
-                tenant_id=tenant_id,
-                job_type=job_type,
-                job_id=None,
-                usage=LlmUsage(
-                    model="text-embedding-3-small",
-                    prompt_tokens=tokens,
-                    completion_tokens=0,
-                    cost_usd=cost,
-                    latency_ms=40,
-                ),
-                request_id="",
-            )
-        await usage_repo.record(
+            await seed_call(s, tenant_id=tenant_id, job_type=UsageJobKind.extraction, job_id=job_id)
+        await seed_call(
+            s,
+            tenant_id=tenant_id,
+            job_type=UsageJobKind.ingestion,
+            job_id=None,
+            model="text-embedding-3-small",
+            prompt_tokens=120,
+            completion_tokens=0,
+            cost_usd=0.002,
+            latency_ms=40,
+        )
+        await seed_call(
+            s,
+            tenant_id=tenant_id,
+            job_type=UsageJobKind.search,
+            job_id=None,
+            model="text-embedding-3-small",
+            prompt_tokens=1,
+            completion_tokens=0,
+            cost_usd=0.000001,
+            latency_ms=40,
+        )
+        await seed_call(
             s,
             tenant_id=other,
             job_type=UsageJobKind.extraction,
             job_id=uuid.uuid4(),
-            usage=LlmUsage(
-                model="gpt-4o-mini",
-                prompt_tokens=999,
-                completion_tokens=999,
-                cost_usd=9.99,
-                latency_ms=999,
-            ),
-            request_id="",
+            prompt_tokens=999,
+            completion_tokens=999,
+            cost_usd=9.99,
+            latency_ms=999,
         )
 
 
