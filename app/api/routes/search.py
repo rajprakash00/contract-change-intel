@@ -11,7 +11,9 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 
 import app.services.search as search_service
+import app.services.usage as usage_service
 from app.api.deps import LlmClientDep, PrincipalDep, SessionDep
+from app.models.llm_usage import UsageJobKind
 from app.schemas.search import SearchHitRead, SearchResponse
 
 router = APIRouter(tags=["search"])
@@ -30,7 +32,19 @@ async def get_search(
     q: Annotated[str, Query(min_length=1)],
     limit: Annotated[int, Query(ge=1, le=_MAX_LIMIT)] = _DEFAULT_LIMIT,
 ) -> SearchResponse:
+    # The query embed is accounted per call, under the search surface (no job
+    # row): the sink persists one row with the active request id.
     hits = await search_service.search(
-        session, llm=llm, tenant_id=principal.tenant_id, query=q, limit=limit
+        session,
+        llm=llm,
+        tenant_id=principal.tenant_id,
+        query=q,
+        limit=limit,
+        usage_sink=usage_service.sink(
+            session,
+            tenant_id=principal.tenant_id,
+            job_type=UsageJobKind.search,
+            job_id=None,
+        ),
     )
     return SearchResponse(items=[SearchHitRead.model_validate(hit) for hit in hits])

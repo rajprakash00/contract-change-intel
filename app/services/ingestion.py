@@ -24,10 +24,12 @@ import app.repositories.document_chunks as document_chunks_repo
 import app.repositories.document_texts as document_texts_repo
 import app.repositories.documents as documents_repo
 import app.repositories.ingestion_jobs as ingestion_jobs_repo
+import app.services.usage as usage_service
 import app.storage.local as local_storage
-from app.llm.client import OpenAiClient
+from app.llm.client import OpenAiClient, UsageSink
 from app.models.document import Document, DocumentStatus
 from app.models.ingestion_job import IngestionJob, IngestionJobStatus
+from app.models.llm_usage import UsageJobKind
 from app.request_context import current_actor, current_request_id
 from app.services.chunking import chunk_document
 from app.services.documents import DocumentNotFoundError
@@ -127,7 +129,17 @@ async def run_next_ingestion_job(
         )
         return True
     try:
-        parsed, chunks, embeddings = await _ingest(llm, data_dir, document)
+        parsed, chunks, embeddings = await _ingest(
+            llm,
+            data_dir,
+            document,
+            usage_sink=usage_service.sink(
+                session,
+                tenant_id=job.tenant_id,
+                job_type=UsageJobKind.ingestion,
+                job_id=job.id,
+            ),
+        )
     except Exception as exc:
         logger.warning(
             "ingestion job failed tenant=%s job=%s reason=%s", job.tenant_id, job.id, exc
@@ -161,19 +173,26 @@ async def run_next_ingestion_job(
 
 
 async def _ingest(
-    llm: OpenAiClient, data_dir: str, document: Document
+    llm: OpenAiClient, data_dir: str, document: Document, *, usage_sink: UsageSink
 ) -> tuple[ParsedDocument, list, list[list[float]]]:
     """Parse stored bytes, chunk the parsed text, embed the chunk texts."""
     path = local_storage.document_path(data_dir, document.tenant_id, document.sha256)
     content = await asyncio.to_thread(Path.read_bytes, path)
     parsed = await asyncio.to_thread(parse, document.mime_type, content)
     chunks = chunk_document(parsed)
-    embeddings = await _embed_chunk_texts(llm, [chunk.text for chunk in chunks])
+    embeddings = await _embed_chunk_texts(
+        llm, [chunk.text for chunk in chunks], usage_sink=usage_sink
+    )
     return parsed, chunks, embeddings
 
 
-async def _embed_chunk_texts(llm: OpenAiClient, texts: list[str]) -> list[list[float]]:
+async def _embed_chunk_texts(
+    llm: OpenAiClient, texts: list[str], *, usage_sink: UsageSink
+) -> list[list[float]]:
     vectors: list[list[float]] = []
     for start in range(0, len(texts), _EMBED_BATCH):
-        vectors.extend(await llm.embed(texts[start : start + _EMBED_BATCH]))
+        reply = await llm.embed(texts[start : start + _EMBED_BATCH])
+        # One row per embed batch: each batch is its own LLM call.
+        await usage_sink(reply.usage)
+        vectors.extend(reply.vectors)
     return vectors

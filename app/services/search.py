@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.repositories.document_chunks as chunks_repo
-from app.llm.client import OpenAiClient
+from app.llm.client import OpenAiClient, UsageSink
 
 # ADR-006: fixed, not tunable, until eval numbers justify a change.
 RRF_K = 60
@@ -69,6 +69,7 @@ async def search(
     tenant_id: uuid.UUID,
     query: str,
     limit: int,
+    usage_sink: UsageSink | None = None,
 ) -> list[SearchHit]:
     """Hybrid search over one tenant's corpus (ADR-006): embed the query, rank
     chunks by vector similarity and by full-text match, fuse both rankings with
@@ -80,7 +81,13 @@ async def search(
     maps those to 502/503.
     """
     return await _hybrid_hits(
-        session, llm=llm, tenant_id=tenant_id, document_id=None, query=query, limit=limit
+        session,
+        llm=llm,
+        tenant_id=tenant_id,
+        document_id=None,
+        query=query,
+        limit=limit,
+        usage_sink=usage_sink,
     )
 
 
@@ -92,6 +99,7 @@ async def search_document(
     document_id: uuid.UUID,
     query: str,
     limit: int,
+    usage_sink: UsageSink | None = None,
 ) -> list[SearchHit]:
     """Hybrid search restricted to one document's chunks (W4·D): the variant
     impact mapping needs — a Change recalls obligations from the base
@@ -100,7 +108,13 @@ async def search_document(
     Same fusion and error behavior as `search`.
     """
     return await _hybrid_hits(
-        session, llm=llm, tenant_id=tenant_id, document_id=document_id, query=query, limit=limit
+        session,
+        llm=llm,
+        tenant_id=tenant_id,
+        document_id=document_id,
+        query=query,
+        limit=limit,
+        usage_sink=usage_sink,
     )
 
 
@@ -112,8 +126,12 @@ async def _hybrid_hits(
     document_id: uuid.UUID | None,
     query: str,
     limit: int,
+    usage_sink: UsageSink | None = None,
 ) -> list[SearchHit]:
-    (query_embedding,) = await llm.embed([query])
+    embed_reply = await llm.embed([query])
+    if usage_sink is not None:
+        await usage_sink(embed_reply.usage)
+    (query_embedding,) = embed_reply.vectors
     depth = limit * _CANDIDATE_DEPTH_FACTOR
     vector_ranked = await chunks_repo.rank_by_similarity(
         session,

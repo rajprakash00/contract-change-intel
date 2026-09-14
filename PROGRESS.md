@@ -133,7 +133,20 @@ resolved after the admin gate; exhausted budgets answer 429 with
 Retry-After through the central error table, budgets are keyed
 (kind, tenant) with the amount in the key, and the Redis-backed shared
 storage is documented as the deliberate multi-replica scaling step
-(ADR-010), not built.
+(ADR-010), not built. · LLM usage persistence + admin spend (#30): every
+LLM call — extraction (citation-gate attempts counted one row per
+attempt), ingestion embed batches, change reports (explanations, impact
+recall, impact mappings), and the search request path (job_id NULL, kind
+`search`) — persists one `llm_usage` row (model, tokens, cost, latency,
+tenant/kind/job linkage, request_id, created_at; composite index
+tenant_id+created_at). `LlmUsage` is produced where the call happens
+(client `_log_usage` returns the record it logs; `LlmResult` carries
+`latency_ms`, structured/embed calls return usage-carrying result
+wrappers) and services persist it through `usage_service.sink(session,
+tenant, kind, job)` — the sink is created by the job runners / the search
+route, so the client layer stays DB-free. Reads are admin-only:
+`GET /usage/spend[?group_by=job_type|job]` returns grouped rows plus the
+tenant total; non-admin principals get 403.
 
 `OPENAI_API_KEY` live and verified end to end; the 6 CUAD fixtures are
 ingested in the dev DB under the eval tenant.
@@ -142,7 +155,7 @@ Baselines (`evals/baselines/`): retrieve recall@5 0.82 / recall@10 0.96;
 extract precision 0.90 / recall 1.0 / citation_validity 1.0; diff
 precision 1.0 / recall 1.0; impact_map precision 0.83 / recall 0.75
 (first live run, gpt-4o-mini — single-run wobble per the README caveat).
-ruff/mypy clean; 352 integration+unit tests green.
+ruff/mypy clean; 374 integration+unit tests green.
 
 ## Open / blocked
 

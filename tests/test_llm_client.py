@@ -11,6 +11,7 @@ from typing import Any
 import httpx2
 import pytest
 from openai import APIStatusError
+from pydantic import BaseModel
 
 from app.llm.client import (
     LlmCallError,
@@ -344,7 +345,7 @@ class TestEmbed:
         ):
             result = await client.embed(["a", "b", "c"])
 
-        assert result == vectors
+        assert result.vectors == vectors
         sent = json.loads(requests[0].content)
         assert sent["model"] == "text-embedding-3-small"
         assert sent["input"] == ["a", "b", "c"]
@@ -368,6 +369,49 @@ class TestEmbed:
             client = OpenAiClient(make_settings(), http_client=wire)
             with pytest.raises(LlmCallError):
                 await client.embed(["text"])
+
+
+class TestUsageRecords:
+    """Every call path hands its per-call usage facts back to the caller, so
+    services can persist them (issue #30): latency is measured where the call
+    happens and travels with the result instead of dying in the log line."""
+
+    async def test_complete_result_carries_latency_ms(self) -> None:
+        async with fake_llm_client("ok") as (client, _):
+            result = await client.complete(system="s", user="u")
+
+        assert isinstance(result.latency_ms, int)
+        assert result.latency_ms >= 0
+
+    async def test_complete_structured_returns_data_with_usage_record(self) -> None:
+        class Answer(BaseModel):
+            value: int
+
+        async with fake_llm_client(
+            json.dumps({"value": 2}), prompt_tokens=100, completion_tokens=20
+        ) as (client, _):
+            result = await client.complete_structured(Answer, system="s", user="u")
+
+        assert result.data == Answer(value=2)
+        assert result.usage.model == "gpt-4o-mini"
+        assert result.usage.prompt_tokens == 100
+        assert result.usage.completion_tokens == 20
+        # Independent worked example: 100/1M * $0.15 + 20/1M * $0.60.
+        assert result.usage.cost_usd == pytest.approx(0.000027)
+        assert isinstance(result.usage.latency_ms, int)
+        assert result.usage.latency_ms >= 0
+
+    async def test_embed_returns_vectors_with_usage_record(self) -> None:
+        async with fake_embedding_client([[1.0]], prompt_tokens=1_000_000) as (client, _):
+            result = await client.embed(["text"])
+
+        assert result.vectors == [[1.0]]
+        assert result.usage.model == "text-embedding-3-small"
+        assert result.usage.prompt_tokens == 1_000_000
+        assert result.usage.completion_tokens == 0
+        # Independent worked example: 1M input tokens at $0.02 / 1M.
+        assert result.usage.cost_usd == pytest.approx(0.02)
+        assert result.usage.latency_ms >= 0
 
 
 class TestStreamAbortAccounting:
