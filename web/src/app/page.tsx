@@ -15,7 +15,7 @@ import { toast } from "sonner";
 import { z } from "zod";
 import { Plus, Trash2 } from "lucide-react";
 
-import { errorMessage } from "@/lib/api";
+import { errorMessage, loadErrorMessage } from "@/lib/api";
 import { useApi } from "@/lib/api-context";
 import { isAdmin } from "@/lib/roles";
 import { DocumentListPage, DocumentRead } from "@/lib/types";
@@ -170,9 +170,7 @@ export default function DocumentsPage() {
       {documents.isLoading ? (
         <TableSkeleton />
       ) : documents.error ? (
-        <p className="text-sm text-destructive">
-          Could not load documents. Is the API running?
-        </p>
+        <p className="text-sm text-destructive">{loadErrorMessage(documents.error)}</p>
       ) : !documents.data?.items.length ? (
         <EmptyState>No documents yet.</EmptyState>
       ) : (

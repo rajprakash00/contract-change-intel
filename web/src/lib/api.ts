@@ -46,6 +46,17 @@ export function errorMessage(error: unknown, fallback: string): string {
   return error instanceof ApiError ? error.detail : fallback;
 }
 
+// Message for a failed page-level load: auth failures read as what they are
+// (a dead session, not a down API); everything else keeps the connectivity
+// hint.
+export function loadErrorMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 401) return "Session expired. Sign in again to continue.";
+    if (error.status === 403) return "You do not have access to these documents.";
+  }
+  return "Could not load documents. Is the API running?";
+}
+
 export function createApi(getAccessToken: TokenGetter) {
   async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const token = await getAccessToken();
