@@ -151,7 +151,12 @@ second-provider spike is gone from the roadmap, progress notes, and
 week-decision docs — ADR-003 keeps its one historical sentence (ADRs are
 history); the README describes only behavior that exists (CI badge, live
 demo link, auth/UI/deploy/eval sections in plain language) and an MIT
-LICENSE landed.
+LICENSE landed. Stale-deferral cleanup: rate limits no longer listed as
+deferred (landed via #24, ADR-010), and docs/writeup.md now matches
+deployed reality — db.t4g.small (not micro), the delete-vs-amend race
+surfaces as the documented 409 (#23), and the limitation line names
+load tests, not rate limits, as the gap; infra/rds.tf header comment
+fixed to match the actual instance class.
 
 `OPENAI_API_KEY` live and verified end to end; the 6 CUAD fixtures are
 ingested in the dev DB under the eval tenant.
@@ -181,8 +186,7 @@ W6·B executed end to end: owner prerequisites → live deploy → full-flow
 UI smoke against `https://change-report.byraj.dev` (done 2026-09-11;
 runbook §First deploy now documents the counts-before-deploy step).
 Remaining lifecycle: idle-at-zero or `terraform destroy` at the end of
-the demo window. Deferred: rate limits, load tests,
-retention, prod CUAD seeding (deliberately skipped — evals stay on the
+the demo window. Deferred: load tests, retention, prod CUAD seeding (deliberately skipped — evals stay on the
 local stack), same-sha deploy rerun guard.
 
 ## Gotchas

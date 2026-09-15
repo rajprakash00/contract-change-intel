@@ -1,4 +1,4 @@
-# RDS PostgreSQL 17 (decision #6): db.t4g.micro, 20 GB gp3, single-AZ,
+# RDS PostgreSQL 17 (decision #6): db.t4g.small, 20 GB gp3, single-AZ,
 # private subnets. pgvector needs no extra work — the W3 migration runs
 # CREATE EXTENSION IF NOT EXISTS vector, and RDS PG17 ships pgvector.
 

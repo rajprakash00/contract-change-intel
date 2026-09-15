@@ -2,8 +2,7 @@
 
 Settled in the W5 grill session. Slice order: **W5·A review queue → W5·B
 audit trail + impact-grading eval → W5·C OIDC auth**, then **W6·A thin UI →
-W6·B AWS deploy**. Rate limits, load tests, retention windows are deferred
-hardening.
+W6·B AWS deploy**. Load tests, retention windows are deferred hardening.
 
 ## Milestone (the target)
 
