@@ -13,7 +13,7 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, Field
 
-from app.llm.client import LlmOutputError, OpenAiClient
+from app.llm.client import LlmOutputError, OpenAiClient, UsageSink
 from app.services.diffing import Change
 from app.services.extraction import Confidence, Obligation
 from app.services.search import SearchHit
@@ -91,6 +91,7 @@ async def map_change_impacts(
     candidates: list[Obligation],
     base_text: str,
     amended_text: str,
+    usage_sink: UsageSink | None = None,
 ) -> list[tuple[Obligation, float]]:
     """One structured call per Change: which candidate Obligations does it
     affect, each with the model's per-Impact Confidence.
@@ -122,9 +123,11 @@ async def map_change_impacts(
     reply = await llm.complete_structured(
         ImpactMapping, system=_SYSTEM_PROMPT, user="\n".join(lines)
     )
+    if usage_sink is not None:
+        await usage_sink(reply.usage)
     impacts: list[tuple[Obligation, float]] = []
     seen: set[int] = set()
-    for mapped in reply.impacts:
+    for mapped in reply.data.impacts:
         if not 0 <= mapped.index < len(candidates):
             raise LlmOutputError(
                 "model output failed impact-index validation: index "

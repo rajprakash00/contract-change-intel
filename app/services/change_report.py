@@ -32,10 +32,12 @@ import app.repositories.document_texts as document_texts_repo
 import app.repositories.documents as documents_repo
 import app.repositories.extraction_jobs as extraction_jobs_repo
 import app.repositories.ingestion_jobs as ingestion_jobs_repo
-from app.llm.client import LlmError, LlmOutputError, OpenAiClient
+import app.services.usage as usage_service
+from app.llm.client import LlmError, LlmOutputError, OpenAiClient, UsageSink
 from app.models.change_report_job import ChangeReportJob, ChangeReportJobStatus
 from app.models.document import DocumentStatus
 from app.models.extraction_job import ExtractionJobStatus
+from app.models.llm_usage import UsageJobKind
 from app.models.review_item import ReviewItemSource
 from app.request_context import current_actor, current_request_id
 from app.services import review_queue
@@ -247,6 +249,7 @@ async def explain_changes(
     changes: list[Change],
     base_text: str,
     amended_text: str,
+    usage_sink: UsageSink | None = None,
 ) -> list[ChangeExplanation]:
     """One structured-output call per version pair: an explanation for every
     detected Change.
@@ -269,7 +272,9 @@ async def explain_changes(
     reply = await llm.complete_structured(
         ChangeExplanations, system=_SYSTEM_PROMPT, user="\n".join(lines)
     )
-    by_index = {explanation.index: explanation for explanation in reply.changes}
+    if usage_sink is not None:
+        await usage_sink(reply.usage)
+    by_index = {explanation.index: explanation for explanation in reply.data.changes}
     if set(by_index) != set(range(len(changes))):
         raise LlmOutputError(
             "model output failed change-index validation: expected exactly one "
@@ -305,12 +310,21 @@ async def run_next_change_report_job(
         # Claimed past the attempt cap: already terminal, nothing to run.
         logger.warning("change report job capped tenant=%s job=%s", job.tenant_id, job.id)
         return True
+    # Every LLM call in the run — explanations, impact recall, impact
+    # mappings — is accounted under this report job.
+    usage_sink = usage_service.sink(
+        session, tenant_id=job.tenant_id, job_type=UsageJobKind.change_report, job_id=job.id
+    )
     try:
         base_text = await _parsed_text(session, job.base_document_id)
         amended_text = await _parsed_text(session, job.amended_document_id)
         changes = detect_changes(base_text, amended_text)
         explanations = await explain_changes(
-            llm, changes=changes, base_text=base_text, amended_text=amended_text
+            llm,
+            changes=changes,
+            base_text=base_text,
+            amended_text=amended_text,
+            usage_sink=usage_sink,
         )
         impacts = await _map_impacts(
             session,
@@ -320,12 +334,14 @@ async def run_next_change_report_job(
             changes=changes,
             base_text=base_text,
             amended_text=amended_text,
+            usage_sink=usage_sink,
         )
     except (LlmError, ValueError) as exc:
         logger.warning(
             "change report job failed tenant=%s job=%s reason=%s", job.tenant_id, job.id, exc
         )
         await change_report_jobs_repo.mark_failed(session, job, error=str(exc))
+        await usage_service.account_rejected_output(exc, usage_sink)
         return True
     result = {
         "changes": [
@@ -433,6 +449,7 @@ async def _map_impacts(
     changes: list[Change],
     base_text: str,
     amended_text: str,
+    usage_sink: UsageSink | None = None,
 ) -> list[list[dict[str, Any]]]:
     """Per Change: document-scoped search over the base version's chunks only,
     the obligations whose citations overlap the hits as candidates, then one
@@ -454,6 +471,7 @@ async def _map_impacts(
                 document_id=base_document_id,
                 query=query,
                 limit=_IMPACT_CHUNK_LIMIT,
+                usage_sink=usage_sink,
             )
             if query is not None
             else []
@@ -465,6 +483,7 @@ async def _map_impacts(
             candidates=candidates,
             base_text=base_text,
             amended_text=amended_text,
+            usage_sink=usage_sink,
         )
         impacts: list[dict[str, Any]] = [
             {

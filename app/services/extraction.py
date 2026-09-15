@@ -21,9 +21,11 @@ import app.repositories.document_texts as document_texts_repo
 import app.repositories.documents as documents_repo
 import app.repositories.extraction_jobs as extraction_jobs_repo
 import app.repositories.ingestion_jobs as ingestion_jobs_repo
-from app.llm.client import LlmError, LlmOutputError, OpenAiClient
+import app.services.usage as usage_service
+from app.llm.client import LlmError, LlmOutputError, OpenAiClient, UsageSink
 from app.models.document import DocumentStatus
 from app.models.extraction_job import ExtractionJob, ExtractionJobStatus
+from app.models.llm_usage import UsageJobKind
 from app.models.review_item import ReviewItemSource
 from app.request_context import current_actor, current_request_id
 from app.services import review_queue
@@ -149,21 +151,27 @@ def _split_cited(
     )
 
 
-async def extract_obligations(llm: OpenAiClient, *, document_text: str) -> ObligationExtraction:
+async def extract_obligations(
+    llm: OpenAiClient, *, document_text: str, usage_sink: UsageSink | None = None
+) -> ObligationExtraction:
     """Extract obligations and defined terms from one document's text via
     structured outputs, gated on citation validity.
 
     Raises LlmOutputError when the model's reply fails schema validation, or
     when even its final attempt cites nothing but invalid spans; LlmCallError
-    when the call itself fails.
+    when the call itself fails. Each attempt is its own LLM call, so each one
+    reports its usage through `usage_sink` when given.
     """
     for attempt in range(1, _CITATION_ATTEMPTS + 1):
-        extraction = await llm.complete_structured(
+        reply = await llm.complete_structured(
             ObligationExtraction,
             system=_SYSTEM_PROMPT,
             user=f"Extract the obligations and defined terms from this agreement text:"
             f"\n\n{document_text}",
         )
+        if usage_sink is not None:
+            await usage_sink(reply.usage)
+        extraction = reply.data
         grounded, rejected = _split_cited(extraction, document_text)
         if not rejected:
             return extraction
@@ -261,6 +269,9 @@ async def run_next_extraction_job(
         # Claimed past the attempt cap: already terminal, nothing to run.
         logger.warning("extraction job capped tenant=%s job=%s", job.tenant_id, job.id)
         return True
+    usage_sink = usage_service.sink(
+        session, tenant_id=job.tenant_id, job_type=UsageJobKind.extraction, job_id=job.id
+    )
     try:
         document = await documents_repo.find_by_id(
             session, tenant_id=job.tenant_id, document_id=job.document_id
@@ -276,12 +287,15 @@ async def run_next_extraction_job(
                 f"document {job.document_id} has no parsed text; "
                 "extraction requires a completed ingestion"
             )
-        extraction = await extract_obligations(llm, document_text=text_row.text)
+        extraction = await extract_obligations(
+            llm, document_text=text_row.text, usage_sink=usage_sink
+        )
     except (LlmError, ValueError) as exc:
         logger.warning(
             "extraction job failed tenant=%s job=%s reason=%s", job.tenant_id, job.id, exc
         )
         await extraction_jobs_repo.mark_failed(session, job, error=str(exc))
+        await usage_service.account_rejected_output(exc, usage_sink)
         return True
     await extraction_jobs_repo.mark_completed(
         session, job, result=extraction.model_dump(mode="json")

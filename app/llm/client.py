@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
+# Services persist one usage row per call through a sink they hand down to
+# the leaf functions that make LLM calls; the client itself stays DB-free.
+UsageSink = Callable[["LlmUsage"], Awaitable[None]]
+
 # Tool arguments are logged for audit but truncated: they may carry document
 # text or identifiers, and the trace is for debugging, not full content.
 _TOOL_ARGS_LOG_LIMIT = 200
@@ -42,6 +46,18 @@ def _redact(arguments: dict[str, Any]) -> str:
     if len(rendered) > _TOOL_ARGS_LOG_LIMIT:
         rendered = rendered[:_TOOL_ARGS_LOG_LIMIT] + "…"
     return rendered
+
+
+@dataclass(frozen=True)
+class LlmUsage:
+    """The usage facts of one completed call: what it cost in tokens, USD, and
+    wall time. Produced where the call happens so callers can persist it."""
+
+    model: str
+    prompt_tokens: int
+    completion_tokens: int
+    cost_usd: float
+    latency_ms: int
 
 
 class LlmError(Exception):
@@ -62,7 +78,16 @@ class LlmCallError(LlmError):
 
 
 class LlmOutputError(LlmError):
-    """The model replied but the output failed schema validation."""
+    """The model replied but the output failed schema validation.
+
+    `usage` carries the call's spend when the reply itself was the problem
+    (refusals: the usage arrived with the response) so the caller can still
+    account for tokens the model burned on output nothing was done with.
+    """
+
+    def __init__(self, message: str, usage: LlmUsage | None = None) -> None:
+        self.usage = usage
+        super().__init__(message)
 
 
 @dataclass(frozen=True)
@@ -72,6 +97,23 @@ class LlmResult:
     prompt_tokens: int
     completion_tokens: int
     cost_usd: float
+    latency_ms: int
+
+
+@dataclass(frozen=True)
+class LlmStructuredResult[ModelT]:
+    """The parsed structured output of one call, with its usage record."""
+
+    data: ModelT
+    usage: LlmUsage
+
+
+@dataclass(frozen=True)
+class LlmEmbeddingResult:
+    """One vector per input text (input order), with the call's usage record."""
+
+    vectors: list[list[float]]
+    usage: LlmUsage
 
 
 @dataclass(frozen=True)
@@ -130,22 +172,26 @@ class OpenAiClient:
         except OpenAIError as exc:
             raise LlmCallError(self._model, exc) from exc
         prompt_tokens, completion_tokens, cost = self._usage_cost(response.usage)
-        self._log_usage(self._model, prompt_tokens, completion_tokens, cost, started)
+        usage = self._log_usage(self._model, prompt_tokens, completion_tokens, cost, started)
         text = response.choices[0].message.content or ""
         return LlmResult(
             text=text,
-            model=self._model,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            cost_usd=cost,
+            model=usage.model,
+            prompt_tokens=usage.prompt_tokens,
+            completion_tokens=usage.completion_tokens,
+            cost_usd=usage.cost_usd,
+            latency_ms=usage.latency_ms,
         )
 
-    async def complete_structured(self, schema: type[ModelT], *, system: str, user: str) -> ModelT:
+    async def complete_structured(
+        self, schema: type[ModelT], *, system: str, user: str
+    ) -> LlmStructuredResult[ModelT]:
         """Chat completion constrained to `schema` via structured outputs.
 
-        Raises LlmOutputError when the model's reply fails validation against
-        the schema (including refusals and truncation), LlmCallError when the
-        call itself fails.
+        Returns the parsed data together with the call's usage record. Raises
+        LlmOutputError when the model's reply fails validation against the
+        schema (including refusals and truncation), LlmCallError when the call
+        itself fails.
         """
         started = time.monotonic()
         rejected = f"model output failed schema validation model={self._model}"
@@ -173,19 +219,20 @@ class OpenAiClient:
         except OpenAIError as exc:
             raise LlmCallError(self._model, exc) from exc
         prompt_tokens, completion_tokens, cost = self._usage_cost(response.usage)
-        self._log_usage(self._model, prompt_tokens, completion_tokens, cost, started)
+        usage = self._log_usage(self._model, prompt_tokens, completion_tokens, cost, started)
         parsed = response.choices[0].message.parsed
         if parsed is None:
-            # Refusal path: usage arrived with the response, so it is logged.
-            raise LlmOutputError(rejected)
-        return parsed
+            # Refusal path: usage arrived with the response, so it is logged
+            # and attached for the caller to persist.
+            raise LlmOutputError(rejected, usage)
+        return LlmStructuredResult(data=parsed, usage=usage)
 
-    async def embed(self, texts: Sequence[str]) -> list[list[float]]:
+    async def embed(self, texts: Sequence[str]) -> LlmEmbeddingResult:
         """Embed texts with the configured embedding model, one vector per text.
 
         The wire may return data out of input order; vectors are re-sorted by
-        index so result[i] always corresponds to texts[i]. Raises LlmCallError
-        when the call fails.
+        index so result.vectors[i] always corresponds to texts[i]. Raises
+        LlmCallError when the call fails.
         """
         started = time.monotonic()
         try:
@@ -198,9 +245,9 @@ class OpenAiClient:
             raise LlmCallError(self._embedding_model, exc) from exc
         prompt_tokens = response.usage.prompt_tokens if response.usage else 0
         cost = cost_usd(self._embedding_model, prompt_tokens=prompt_tokens, completion_tokens=0)
-        self._log_usage(self._embedding_model, prompt_tokens, 0, cost, started)
+        usage = self._log_usage(self._embedding_model, prompt_tokens, 0, cost, started)
         by_index = sorted(response.data, key=lambda item: item.index)
-        return [item.embedding for item in by_index]
+        return LlmEmbeddingResult(vectors=[item.embedding for item in by_index], usage=usage)
 
     async def stream_complete(self, *, system: str, user: str) -> AsyncIterator[str]:
         """Stream one chat completion, yielding text deltas as they arrive.
@@ -302,13 +349,16 @@ class OpenAiClient:
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
                 )
-                self._log_usage(self._model, prompt_tokens, completion_tokens, cost, started)
+                usage = self._log_usage(
+                    self._model, prompt_tokens, completion_tokens, cost, started
+                )
                 return LlmResult(
                     text=message.content or "",
-                    model=self._model,
-                    prompt_tokens=prompt_tokens,
-                    completion_tokens=completion_tokens,
-                    cost_usd=cost,
+                    model=usage.model,
+                    prompt_tokens=usage.prompt_tokens,
+                    completion_tokens=usage.completion_tokens,
+                    cost_usd=usage.cost_usd,
+                    latency_ms=usage.latency_ms,
                 )
             messages.append(cast(ChatCompletionAssistantMessageParam, message.model_dump()))
             for call in tool_calls:
@@ -352,7 +402,9 @@ class OpenAiClient:
 
     def _log_usage(
         self, model: str, prompt_tokens: int, completion_tokens: int, cost: float, started: float
-    ) -> None:
+    ) -> LlmUsage:
+        """One log line per call, and the record returned so callers persist
+        the same facts instead of re-deriving them."""
         latency_ms = int((time.monotonic() - started) * 1000)
         logger.info(
             "llm call model=%s prompt_tokens=%d completion_tokens=%d cost_usd=%.6f latency_ms=%d",
@@ -361,4 +413,11 @@ class OpenAiClient:
             completion_tokens,
             cost,
             latency_ms,
+        )
+        return LlmUsage(
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost_usd=cost,
+            latency_ms=latency_ms,
         )

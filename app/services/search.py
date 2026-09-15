@@ -15,7 +15,9 @@ from dataclasses import dataclass
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.repositories.document_chunks as chunks_repo
-from app.llm.client import OpenAiClient
+import app.services.usage as usage_service
+from app.llm.client import OpenAiClient, UsageSink
+from app.models.llm_usage import UsageJobKind
 
 # ADR-006: fixed, not tunable, until eval numbers justify a change.
 RRF_K = 60
@@ -75,12 +77,21 @@ async def search(
     RRF, and return the top `limit` as citation-spanned hits.
 
     Cross-document by design: impact mapping must recall obligations across the
-    tenant's whole corpus, not just within one document. Raises LlmCallError /
+    tenant's whole corpus, not just within one document. The query embed is
+    accounted under the search surface (no job row). Raises LlmCallError /
     LlmNotConfiguredError from the query embedding; the app-wide error table
     maps those to 502/503.
     """
     return await _hybrid_hits(
-        session, llm=llm, tenant_id=tenant_id, document_id=None, query=query, limit=limit
+        session,
+        llm=llm,
+        tenant_id=tenant_id,
+        document_id=None,
+        query=query,
+        limit=limit,
+        usage_sink=usage_service.sink(
+            session, tenant_id=tenant_id, job_type=UsageJobKind.search, job_id=None
+        ),
     )
 
 
@@ -92,6 +103,7 @@ async def search_document(
     document_id: uuid.UUID,
     query: str,
     limit: int,
+    usage_sink: UsageSink | None = None,
 ) -> list[SearchHit]:
     """Hybrid search restricted to one document's chunks (W4·D): the variant
     impact mapping needs — a Change recalls obligations from the base
@@ -100,7 +112,13 @@ async def search_document(
     Same fusion and error behavior as `search`.
     """
     return await _hybrid_hits(
-        session, llm=llm, tenant_id=tenant_id, document_id=document_id, query=query, limit=limit
+        session,
+        llm=llm,
+        tenant_id=tenant_id,
+        document_id=document_id,
+        query=query,
+        limit=limit,
+        usage_sink=usage_sink,
     )
 
 
@@ -112,8 +130,12 @@ async def _hybrid_hits(
     document_id: uuid.UUID | None,
     query: str,
     limit: int,
+    usage_sink: UsageSink | None = None,
 ) -> list[SearchHit]:
-    (query_embedding,) = await llm.embed([query])
+    embed_reply = await llm.embed([query])
+    if usage_sink is not None:
+        await usage_sink(embed_reply.usage)
+    (query_embedding,) = embed_reply.vectors
     depth = limit * _CANDIDATE_DEPTH_FACTOR
     vector_ranked = await chunks_repo.rank_by_similarity(
         session,
