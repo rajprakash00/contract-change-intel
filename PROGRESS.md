@@ -146,7 +146,12 @@ wrappers) and services persist it through `usage_service.sink(session,
 tenant, kind, job)` — the sink is created by the job runners / the search
 route, so the client layer stays DB-free. Reads are admin-only:
 `GET /usage/spend[?group_by=job_type|job]` returns grouped rows plus the
-tenant total; non-admin principals get 403.
+tenant total; non-admin principals get 403. · Docs/meta (#26): the retired
+second-provider spike is gone from the roadmap, progress notes, and
+week-decision docs — ADR-003 keeps its one historical sentence (ADRs are
+history); the README describes only behavior that exists (CI badge, live
+demo link, auth/UI/deploy/eval sections in plain language) and an MIT
+LICENSE landed.
 
 `OPENAI_API_KEY` live and verified end to end; the 6 CUAD fixtures are
 ingested in the dev DB under the eval tenant.
@@ -159,7 +164,6 @@ ruff/mypy clean; 374 integration+unit tests green.
 
 ## Open / blocked
 
-- `ANTHROPIC_API_KEY` (owner) — blocks the Anthropic SDK spike.
 - DELETE has no retention window; audit_log retention APIs still deferred
   (the tenant-scoped read API landed in W5·B, the `actor` column in W5·C).
 - Auth0 provisioning complete: domain + API + claims Action attached to
@@ -177,7 +181,7 @@ W6·B executed end to end: owner prerequisites → live deploy → full-flow
 UI smoke against `https://change-report.byraj.dev` (done 2026-09-11;
 runbook §First deploy now documents the counts-before-deploy step).
 Remaining lifecycle: idle-at-zero or `terraform destroy` at the end of
-the demo window. Deferred: rate limits, load tests, Anthropic spike,
+the demo window. Deferred: rate limits, load tests,
 retention, prod CUAD seeding (deliberately skipped — evals stay on the
 local stack), same-sha deploy rerun guard.
 

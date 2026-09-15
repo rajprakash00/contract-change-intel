@@ -20,9 +20,8 @@ routes low-confidence output to a human review queue. Multi-tenant, audited.
 | Frontend   | Next.js/TypeScript (later phase) |
 | Delivery   | Docker Compose locally, GitHub Actions CI, cloud deploy |
 
-LLM provider: OpenAI primary (structured outputs + `text-embedding-3-small`);
-Anthropic SDK once during week 2 for comparison. Frameworks (LangChain/LangGraph)
-are not used for core pipelines; primitives first.
+LLM provider: OpenAI (structured outputs + `text-embedding-3-small`).
+Frameworks (LangChain/LangGraph) are not used for core pipelines; primitives first.
 
 ## Architecture
 
