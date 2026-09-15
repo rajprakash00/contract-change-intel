@@ -54,12 +54,21 @@ jobs:
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      # ECR repos are IMMUTABLE: pushing a tag that already exists is an
+      # error, which made same-sha reruns (e.g. re-dispatching after an IAM
+      # fix mid-run) fail at push time. Skip build+push when the sha tag is
+      # already there — the rest of the pipeline is idempotent.
       - name: Build and push API image
         env:
           REPO: ${{ steps.stack.outputs.api_repo }}
         run: |
-          docker build -t "$REPO:${{ github.sha }}" .
-          docker push "$REPO:${{ github.sha }}"
+          if aws ecr describe-images --repository-name "${REPO##*/}" \
+               --image-ids imageTag=${{ github.sha }} >/dev/null 2>&1; then
+            echo "sha tag already in ECR — skipping build and push"
+          else
+            docker build -t "$REPO:${{ github.sha }}" .
+            docker push "$REPO:${{ github.sha }}"
+          fi
 
       - name: Build and push UI image
         env:
@@ -70,12 +79,17 @@ jobs:
         # NEXT_PUBLIC_* values are public SPA identifiers baked into the
         # client bundle; repo variables, never secrets.
         run: |
-          docker build \
-            --build-arg NEXT_PUBLIC_AUTH0_DOMAIN \
-            --build-arg NEXT_PUBLIC_AUTH0_CLIENT_ID \
-            --build-arg NEXT_PUBLIC_AUTH0_AUDIENCE \
-            -t "$REPO:${{ github.sha }}" web/
-          docker push "$REPO:${{ github.sha }}"
+          if aws ecr describe-images --repository-name "${REPO##*/}" \
+               --image-ids imageTag=${{ github.sha }} >/dev/null 2>&1; then
+            echo "sha tag already in ECR — skipping build and push"
+          else
+            docker build \
+              --build-arg NEXT_PUBLIC_AUTH0_DOMAIN \
+              --build-arg NEXT_PUBLIC_AUTH0_CLIENT_ID \
+              --build-arg NEXT_PUBLIC_AUTH0_AUDIENCE \
+              -t "$REPO:${{ github.sha }}" web/
+            docker push "$REPO:${{ github.sha }}"
+          fi
 
       # Families whose task definitions CI re-registers with the new sha tag.
       # Terraform applied first sets the baseline; from then on CI owns revisions
