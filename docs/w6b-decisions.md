@@ -63,8 +63,7 @@ provisioning overruns.
 
 ## Out of scope / fallback
 
-- Rate limits, load tests, Anthropic spike, retention stay deferred
-  (PROGRESS.md).
+- Load tests, retention stay deferred (PROGRESS.md).
 - Fly.io fallback unchanged: engaged only if VPC/IAM provisioning overruns;
   same images, different scaffold.
 - RDS stop is not used as a cost lever (auto-resumes after 7 days); teardown

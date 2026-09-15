@@ -17,7 +17,7 @@ reviewer roles).
 ## Deployment (W6·B)
 
 AWS **ap-south-1 (Mumbai)**: ECS Fargate (API, UI, worker — 0.25 vCPU / 512 MB
-each), RDS PostgreSQL 17 (db.t4g.micro, pgvector) in private subnets, EFS for
+each), RDS PostgreSQL 17 (db.t4g.small, pgvector) in private subnets, EFS for
 content-addressed document bytes, ECR images, SSM SecureStrings for secrets.
 Edge: purchased domain on Cloudflare (Universal SSL) → ALB with an ACM cert
 (`Full (strict)`), path-routing `/api/*` → API, everything else → the Next.js
@@ -60,9 +60,11 @@ Caveats, read before quoting:
 ## Limitations
 
 - Postgres job-status enum types are dropped explicitly in downgrades;
-  delete-vs-amend concurrency race is unhandled (falls through to a 500).
+  the delete-vs-amend race surfaces as the documented 409
+  (`DocumentHasAmendmentsError`), not a raw 500.
 - No retention windows (uploads, audit log); DELETE is immediate.
-- No rate limits or load-test numbers; demo posture, single instances,
+- No load-test numbers; rate limits cap LLM spend per tenant per hour but
+  are not load-validated; demo posture, single instances,
   worker at desired count 0 while idle.
 - Review dispositions are terminal (`pending → approved | edited | rejected`)
   — no re-entry loops, by design.
