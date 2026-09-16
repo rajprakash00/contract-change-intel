@@ -62,7 +62,9 @@ jobs:
         env:
           REPO: ${{ steps.stack.outputs.api_repo }}
         run: |
-          if aws ecr describe-images --repository-name "${REPO##*/}" \
+          # REPO is the registry URL .../<namespace>/<name>; the ECR
+          # repository name keeps the namespace, so strip only the host.
+          if aws ecr describe-images --repository-name "${REPO#*/}" \
                --image-ids imageTag=${{ github.sha }} >/dev/null 2>&1; then
             echo "sha tag already in ECR — skipping build and push"
           else
@@ -79,7 +81,9 @@ jobs:
         # NEXT_PUBLIC_* values are public SPA identifiers baked into the
         # client bundle; repo variables, never secrets.
         run: |
-          if aws ecr describe-images --repository-name "${REPO##*/}" \
+          # REPO is the registry URL .../<namespace>/<name>; the ECR
+          # repository name keeps the namespace, so strip only the host.
+          if aws ecr describe-images --repository-name "${REPO#*/}" \
                --image-ids imageTag=${{ github.sha }} >/dev/null 2>&1; then
             echo "sha tag already in ECR — skipping build and push"
           else

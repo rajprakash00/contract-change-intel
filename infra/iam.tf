@@ -34,6 +34,7 @@ data "aws_iam_policy_document" "task_execution_secrets" {
     resources = [
       aws_ssm_parameter.database_url.arn,
       aws_ssm_parameter.openai_api_key.arn,
+      aws_ssm_parameter.sentry_dsn.arn,
     ]
   }
 
