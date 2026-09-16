@@ -2,7 +2,8 @@
 
 import { Auth0Provider } from "@auth0/auth0-react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import * as Sentry from "@sentry/browser";
+import { useEffect, useMemo, useState } from "react";
 
 import { ApiContextProvider } from "@/lib/api-context";
 import { Toaster } from "@/components/ui/sonner";
@@ -30,6 +31,24 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         },
       }),
   );
+
+  // Error capture only, client-side (the failures the API logs never see —
+  // dead-session states, query-level errors). No DSN → disabled; same
+  // posture as the backend's empty-DSN no-op. An effect, not a render-time
+  // init: client components are prerendered on the server, where there is
+  // no window — and a state-initializer init would never run again after
+  // hydration.
+  useEffect(() => {
+    if (!process.env.NEXT_PUBLIC_SENTRY_DSN) return;
+    Sentry.init({
+      dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
+      // Separates prod events from local ones in one project.
+      environment: process.env.NEXT_PUBLIC_SENTRY_ENVIRONMENT,
+      // Window errors and unhandled rejections; no tracing.
+      tracesSampleRate: 0,
+      allowUrls: [window.location.origin],
+    });
+  }, []);
 
   const authEnabled = Boolean(domain && clientId && audience);
   const app = useMemo(() => {

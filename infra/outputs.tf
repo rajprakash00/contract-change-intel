@@ -30,6 +30,7 @@ output "ssm_parameter_names" {
   value = {
     database_url   = aws_ssm_parameter.database_url.name
     openai_api_key = aws_ssm_parameter.openai_api_key.name
+    sentry_dsn     = aws_ssm_parameter.sentry_dsn.name
   }
 }
 

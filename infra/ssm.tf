@@ -25,3 +25,13 @@ resource "aws_ssm_parameter" "openai_api_key" {
 
   tags = { Environment = var.environment }
 }
+
+resource "aws_ssm_parameter" "sentry_dsn" {
+  # Public-safe value (browser SDKs ship DSNs too); SecureString keeps the
+  # secrets posture uniform (decision #7). Empty disables capture app-side.
+  name  = "${local.ssm_prefix}/sentry_dsn"
+  type  = "SecureString"
+  value = var.sentry_dsn
+
+  tags = { Environment = var.environment }
+}

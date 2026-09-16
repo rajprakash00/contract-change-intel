@@ -157,6 +157,26 @@ deployed reality — db.t4g.small (not micro), the delete-vs-amend race
 surfaces as the documented 409 (#23), and the limitation line names
 load tests, not rate limits, as the gap; infra/rds.tf header comment
 fixed to match the actual instance class.
+· Observability + demo-incident hardening (2026-09-15): the live demo
+exposed two operational gaps — `cci-prod-worker` at desired 0 while jobs
+queued, and `/cci/prod/openai_api_key` still the literal placeholder. Both
+are now pre-flight checks in the new `docs/testing-runbook.md`, which also
+owns the flow-to-log-to-track checklist. Hardening: JSON log records
+behind `Settings.log_format` (`LOG_FORMAT=json` in deployed tasks) feeding
+the CloudWatch metric filters + three SNS alarms in `infra/observability.tf`
+(job failures, api errors, worker errors); Sentry error capture on both
+sides (`sentry-sdk[fastapi]` / `@sentry/browser`, DSN via
+`/cci/prod/sentry_dsn` or the `NEXT_PUBLIC_*` repo vars, empty DSN =
+disabled, `SENTRY_ENVIRONMENT=prod` labels deployed events). Activated in
+prod 2026-09-16 (apply + SNS confirmed + DSN in SSM). Session-expiry UX
+fix: fatal silent-refresh codes (`missing_refresh_token`/`invalid_grant`)
+now redirect to sign-in instead of wedging on "Is the API running?"
+(`api-context.tsx`, `loadErrorMessage`; vitest-locked). Prod flow
+re-verified end to end: ~90s upload→report, $0.0041 per pair. Tests: 376
+green; ruff/mypy, web lint/tsc/build, terraform validate all clean.
+Pending: commit + `gh workflow run deploy` (rolls SENTRY_DSN + LOG_FORMAT
+into the api; worker on next scale-up), `NEXT_PUBLIC_SENTRY_DSN` +
+`NEXT_PUBLIC_SENTRY_ENVIRONMENT=prod` repo vars for the UI build.
 
 `OPENAI_API_KEY` live and verified end to end; the 6 CUAD fixtures are
 ingested in the dev DB under the eval tenant.
@@ -165,7 +185,7 @@ Baselines (`evals/baselines/`): retrieve recall@5 0.82 / recall@10 0.96;
 extract precision 0.90 / recall 1.0 / citation_validity 1.0; diff
 precision 1.0 / recall 1.0; impact_map precision 0.83 / recall 0.75
 (first live run, gpt-4o-mini — single-run wobble per the README caveat).
-ruff/mypy clean; 374 integration+unit tests green.
+ruff/mypy clean; 376 integration+unit tests green.
 
 ## Open / blocked
 
@@ -212,6 +232,12 @@ local stack), same-sha deploy rerun guard.
   landing page. Wired `useRefreshTokens` + `cacheLocation: "localstorage"`
   + `offline_access` (providers.tsx); the Auth0 API must keep "Allow
   Offline Access" on.
+- CloudWatch metric-filter grammar (AWS-verified): patterns support `&&`
+  but **not** `||`, and wildcards sit inside the quoted value
+  (`{ $.message = "*job failed*" }`) — `*"job failed"*` and `||`-joined
+  expressions both fail PutMetricFilter with a bare
+  `InvalidParameterException`. Two filters can emit into one metric name
+  (infra/observability.tf) to get an OR.
 - `get_settings` is lru_cached and auth tests flip `AUTH0_DOMAIN` via env —
   `tests/conftest.py::auth_env` clears the cache around every test; keep
   doing so if other env-driven settings grow knobs.

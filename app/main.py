@@ -10,7 +10,7 @@ from app.api.deps import aclose_cached_jwks_clients
 from app.api.routes import audit, documents, extraction, health, ingestion, reviews, search, usage
 from app.config import get_settings
 from app.errors import register_exception_handlers
-from app.logging_config import configure_logging
+from app.logging_config import configure_logging, init_sentry
 from app.middleware import RequestIDMiddleware
 
 logger = logging.getLogger(__name__)
@@ -19,9 +19,11 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # Owns the engine lifecycle: created on startup, connections released on shutdown.
-    configure_logging(get_settings().log_level)
+    settings = get_settings()
+    configure_logging(settings.log_level, settings.log_format)
+    init_sentry(settings.sentry_dsn, settings.sentry_environment)
     logger.info("api starting")
-    db.init_engine(get_settings().database_url)
+    db.init_engine(settings.database_url)
     yield
     logger.info("api shutting down; disposing database engine")
     await db.dispose_engine()

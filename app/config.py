@@ -13,6 +13,15 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5433/cci"
 
     log_level: str = "INFO"
+    # "console" (human text) locally, "json" in deployed tasks — the JSON
+    # record is the contract CloudWatch metric filters key on
+    # (infra/observability.tf).
+    log_format: str = "console"
+    # Error capture (Sentry). Empty DSN means disabled; deployed tasks read
+    # it from SSM like the other secrets. Environment labels prod events
+    # apart from local ones in one project (SDK default is "production").
+    sentry_dsn: str = ""
+    sentry_environment: str = ""
 
     # Same-origin serving: the browser always says /api/...; the prefix is
     # stripped once here (dev: empty — Next rewrites proxy the bare API; prod:
