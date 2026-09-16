@@ -65,3 +65,15 @@ variable "aws_region_tag" {
   type        = string
   default     = "aps1"
 }
+
+variable "alert_email" {
+  description = "Owner email for CloudWatch alarm notifications (SNS); the subscription stays pending until the confirmation mail is clicked."
+  type        = string
+  default     = ""
+}
+
+variable "sentry_dsn" {
+  description = "Sentry DSN for unhandled-exception capture; empty disables capture (app treats an empty DSN as a no-op). Landing in an SSM SecureString consumed via the task secrets block."
+  type        = string
+  default     = ""
+}

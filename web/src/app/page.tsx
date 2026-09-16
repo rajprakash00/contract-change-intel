@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/browser";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createColumnHelper,
@@ -10,7 +11,7 @@ import { useAuth0 } from "@auth0/auth0-react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { toast } from "sonner";
 import { z } from "zod";
 import { Plus, Trash2 } from "lucide-react";
@@ -79,6 +80,12 @@ export default function DocumentsPage() {
     queryKey: ["documents"],
     queryFn: () => api.listDocuments(),
   });
+
+  // Query-level failures are handled, never thrown to window — without this
+  // capture the dead-session states Sentry exists for are invisible.
+  useEffect(() => {
+    if (documents.error) Sentry.captureException(documents.error);
+  }, [documents.error]);
 
   const remove = useMutation({
     mutationFn: (documentId: string) => api.deleteDocument(documentId),

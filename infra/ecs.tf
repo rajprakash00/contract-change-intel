@@ -13,6 +13,9 @@ locals {
   api_environment = [
     { name = "ROOT_PATH", value = "/api" }, # ALB strips nothing; FastAPI serves under /api (docs/w6-decisions.md #6)
     { name = "DATA_DIR", value = "/data" },
+    # JSON logs are the contract the observability.tf metric filters key on.
+    { name = "LOG_FORMAT", value = "json" },
+    { name = "SENTRY_ENVIRONMENT", value = "prod" },
     { name = "AUTH0_DOMAIN", value = var.auth0_domain },
     { name = "AUTH0_AUDIENCE", value = var.auth0_audience },
   ]
@@ -20,6 +23,7 @@ locals {
   api_secrets = [
     { name = "DATABASE_URL", valueFrom = aws_ssm_parameter.database_url.arn },
     { name = "OPENAI_API_KEY", valueFrom = aws_ssm_parameter.openai_api_key.arn },
+    { name = "SENTRY_DSN", valueFrom = aws_ssm_parameter.sentry_dsn.arn },
   ]
 
   # transit_encryption_port is omitted on purpose: the EFS mount helper's own

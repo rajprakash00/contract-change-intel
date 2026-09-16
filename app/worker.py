@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import app.db as db
 from app.config import Settings, get_settings
 from app.llm.client import OpenAiClient
-from app.logging_config import configure_logging
+from app.logging_config import configure_logging, init_sentry
 from app.services import change_report, extraction, ingestion
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,8 @@ async def run_next_job(
 
 async def main() -> None:
     settings: Settings = get_settings()
-    configure_logging(settings.log_level)
+    configure_logging(settings.log_level, settings.log_format)
+    init_sentry(settings.sentry_dsn, settings.sentry_environment)
     llm = OpenAiClient(settings)  # raises LlmNotConfiguredError when the key is missing
     db.init_engine(settings.database_url)
     logger.info(

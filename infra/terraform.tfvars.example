@@ -17,3 +17,8 @@
 #   api_desired_count     = 0
 #   ui_desired_count      = 0
 #   worker_desired_count  = 0
+
+# Observability: SNS alarm target (subscription needs one manual confirm) and
+# Sentry error capture (empty = disabled).
+alert_email = ""
+sentry_dsn  = ""
