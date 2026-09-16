@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy import delete, select
 
 import app.db as db
-from app.config import Settings
+from app.config import Settings, get_settings
 from app.llm.client import OpenAiClient
 from app.models.change_report_job import ChangeReportJob
 from app.models.document import Document
@@ -95,7 +95,7 @@ async def settings(tmp_path: Path) -> Settings:
 
 @pytest.fixture(autouse=True)
 async def engine() -> AsyncIterator[None]:
-    db.init_engine("postgresql+asyncpg://postgres:postgres@localhost:5433/cci")
+    db.init_engine(get_settings().database_url)
     yield
     await db.dispose_engine()
 

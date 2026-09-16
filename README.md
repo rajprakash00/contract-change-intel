@@ -41,7 +41,7 @@ around without spending anything, then re-run the pipeline yourself with the
 To reseed after a wipe (or to seed a local tenant):
 
 ```sh
-uv run python scripts/seed_demo.py --tenant-id <demo-tenant-uuid>
+uv run python -m scripts.seed_demo --tenant-id <demo-tenant-uuid>
 ```
 
 Suggested first run: upload an agreement, then an amendment for it, then

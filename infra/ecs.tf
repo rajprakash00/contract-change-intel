@@ -18,6 +18,8 @@ locals {
     { name = "SENTRY_ENVIRONMENT", value = "prod" },
     { name = "AUTH0_DOMAIN", value = var.auth0_domain },
     { name = "AUTH0_AUDIENCE", value = var.auth0_audience },
+    # ADR-011: the published demo tenant's reduced budget tier.
+    { name = "DEMO_TENANT_IDS", value = "4a76d08c-bcc9-4617-9e25-a1b7d768f109" },
   ]
 
   api_secrets = [

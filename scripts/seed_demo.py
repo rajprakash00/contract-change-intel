@@ -2,7 +2,7 @@
 Amendment, then run Ingestion, Extraction and one Change Report so the demo
 shows finished output before a visitor spends any budget.
 
-Run: uv run python scripts/seed_demo.py [--tenant-id <uuid>]
+Run: uv run python -m scripts.seed_demo [--tenant-id <uuid>]
 
 Without --tenant-id the first UUID in DEMO_TENANT_IDS is used. Idempotent and
 repairing: a completed Change Report means "already seeded" (no-op, no LLM
