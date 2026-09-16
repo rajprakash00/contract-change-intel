@@ -17,3 +17,6 @@ __pycache__/
 
 # local harness run reports (baselines/ is the committed, curated set)
 evals/runs/
+
+# private provisioning records (never commit)
+.auth-accounts.local
