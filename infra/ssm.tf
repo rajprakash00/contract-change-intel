@@ -19,9 +19,15 @@ resource "aws_ssm_parameter" "database_url" {
 resource "aws_ssm_parameter" "openai_api_key" {
   # Placeholder until the owner overwrites it; the API surfaces a 503 for LLM
   # features with an unusable key rather than failing silently.
+  # The owner overwrites the value out-of-band after first apply, so Terraform
+  # must never reset it to the placeholder on later applies.
   name  = "${local.ssm_prefix}/openai_api_key"
   type  = "SecureString"
   value = "replace-me"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
 
   tags = { Environment = var.environment }
 }
