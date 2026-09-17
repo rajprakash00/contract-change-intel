@@ -8,7 +8,8 @@ Upload an agreement plus its amendments. Get back extracted obligations
 impact mapping onto affected obligations — with citations, confidence
 scores, and human review for low-confidence output.
 
-**Live demo:** <https://change-report.byraj.dev> — login required.
+**Live demo:** <https://change-report.byraj.dev> — log in with the demo
+credentials below.
 
 ## How it works
 
@@ -23,10 +24,35 @@ scores, and human review for low-confidence output.
 5. **Review** — every statement carries a confidence score. Anything below
    the threshold waits in a review queue for a human to approve or correct.
 
+## Try the demo
+
+Two provisioned demo accounts, ready to use:
+
+| Account | Email | Password | Can do |
+|---|---|---|---|
+| Admin | `demo-admin@byraj.dev` | `78KeoOwmxw0HrY4fsLITpkR` | Everything: upload, delete, enqueue jobs, dispositions |
+| Reviewer | `demo-reviewer@byraj.dev` | `47EO4c9K13BTq8O5K4tY3W` | Read + resolve review items only |
+
+The tenant comes pre-seeded (ADR-011): a sample agreement and its amendment,
+with extraction results and a completed change report already generated. Look
+around without spending anything, then re-run the pipeline yourself with the
+"run extraction / generate report" actions.
+
+To reseed after a wipe (or to seed a local tenant):
+
+```sh
+uv run python -m scripts.seed_demo --tenant-id <demo-tenant-uuid>
+```
+
+Suggested first run: upload an agreement, then an amendment for it, then
+generate the change report for the pair.
+
 Log in with Auth0 to use the app. Uploads and deletes need the admin role.
 Review dispositions need admin or reviewer. Every mutating action lands in
-an audit log. Enqueuing LLM work spends a per-tenant hourly budget; an
-exhausted budget answers 429 with a retry-after hint.
+an audit log. Enqueuing LLM work spends a per-tenant hourly budget — the
+demo tenant runs a reduced one (5 extractions / 2 change reports per hour);
+an exhausted budget answers 429 with a retry-after hint, and the seeded
+report stays viewable meanwhile.
 
 ## Run it locally
 

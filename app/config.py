@@ -53,6 +53,14 @@ class Settings(BaseSettings):
     rate_limit_extraction_per_hour: int = 60
     rate_limit_change_report_per_hour: int = 60
 
+    # Demo budget tier (ADR-011): tenants listed in demo_tenant_ids (comma-
+    # separated UUIDs, matched case-insensitively) get the demo_* budgets
+    # below on the enqueue endpoints instead of the standard ones. The
+    # published demo tenant is provisioned in Auth0, not here.
+    demo_tenant_ids: str = ""
+    demo_rate_limit_extraction_per_hour: int = 5
+    demo_rate_limit_change_report_per_hour: int = 2
+
     # W5·A review queue: LLM output whose Confidence falls strictly below the
     # per-job-kind threshold is routed to human review as a pending item.
     review_confidence_threshold_extraction: float = 0.7

@@ -1,0 +1,20 @@
+MASTER SERVICES AGREEMENT
+
+1. Services
+The Provider shall deliver the managed migration services described in
+Statement of Work No. 1.
+
+2. Payment
+The Client shall pay each invoice within 30 days of receipt. Late payments
+accrue interest at 1% per month.
+
+3. Termination
+Either party may terminate for material breach on 14 days written notice.
+
+4. Confidentiality
+Each party shall protect the other party's confidential information for
+3 years after termination.
+
+5. Liability
+The Provider's aggregate liability is capped at the fees paid in the
+preceding 12 months.

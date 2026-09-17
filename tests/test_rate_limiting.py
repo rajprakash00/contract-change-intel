@@ -29,6 +29,9 @@ from tests.test_change_report_api import body, make_document, make_ready, make_r
 from tests.test_extraction_api import mark_parsed
 
 LIMIT_PER_HOUR = 2
+DEMO_TENANT = uuid.uuid4()
+DEMO_EXTRACTION_PER_HOUR = 2
+DEMO_CHANGE_REPORT_PER_HOUR = 1
 
 
 def bearer_long_lived(tenant_id: uuid.UUID) -> dict[str, str]:
@@ -58,6 +61,21 @@ def isolated_budget(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     ratelimit.reset()
     monkeypatch.setenv("RATE_LIMIT_EXTRACTION_PER_HOUR", str(LIMIT_PER_HOUR))
     monkeypatch.setenv("RATE_LIMIT_CHANGE_REPORT_PER_HOUR", str(LIMIT_PER_HOUR))
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture
+def demo_budget(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """A demo tier (ADR-011): the listed demo tenant gets the demo budgets,
+    everyone else the standard ones. Runs after `isolated_budget` so the
+    demo knobs win where they overlap; settings cache re-cleared for both."""
+    monkeypatch.setenv("RATE_LIMIT_EXTRACTION_PER_HOUR", "1")
+    monkeypatch.setenv("RATE_LIMIT_CHANGE_REPORT_PER_HOUR", "2")
+    monkeypatch.setenv("DEMO_TENANT_IDS", str(DEMO_TENANT))
+    monkeypatch.setenv("DEMO_RATE_LIMIT_EXTRACTION_PER_HOUR", str(DEMO_EXTRACTION_PER_HOUR))
+    monkeypatch.setenv("DEMO_RATE_LIMIT_CHANGE_REPORT_PER_HOUR", str(DEMO_CHANGE_REPORT_PER_HOUR))
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -233,3 +251,59 @@ async def test_retry_after_naming_the_window_reset(client: AsyncClient) -> None:
     exceeded = await client.post(f"/documents/{extra['id']}/extraction", headers=headers)
 
     assert int(exceeded.headers["Retry-After"]) <= 3600
+
+
+async def test_demo_tenant_gets_the_demo_extraction_budget(
+    client: AsyncClient, demo_budget: None
+) -> None:
+    """ADR-011: a tenant on the demo list is budgeted at the demo tier,
+    here above the standard one; a listed tenant only."""
+    headers = bearer(DEMO_TENANT)
+    documents = [
+        await _parsed_document(client, DEMO_TENANT, headers)
+        for _ in range(DEMO_EXTRACTION_PER_HOUR + 1)
+    ]
+    for document in documents[:DEMO_EXTRACTION_PER_HOUR]:
+        response = await client.post(f"/documents/{document['id']}/extraction", headers=headers)
+        assert response.status_code == 202
+
+    exceeded = await client.post(
+        f"/documents/{documents[DEMO_EXTRACTION_PER_HOUR]['id']}/extraction",
+        headers=headers,
+    )
+    assert exceeded.status_code == 429
+
+    # A non-demo tenant still gets the standard budget, not the demo one:
+    # its first attempt passes, its second hits the standard limit of 1.
+    other = uuid.uuid4()
+    other_document = await _parsed_document(client, other)
+    first = await client.post(
+        f"/documents/{other_document['id']}/extraction", headers=bearer(other)
+    )
+    second_document = await _parsed_document(client, other)
+    second = await client.post(
+        f"/documents/{second_document['id']}/extraction", headers=bearer(other)
+    )
+    assert first.status_code == 202
+    assert second.status_code == 429
+
+
+async def test_demo_tenant_gets_the_demo_change_report_budget(
+    client: AsyncClient, demo_budget: None
+) -> None:
+    headers = bearer(DEMO_TENANT)
+    base, amended = await make_ready_pair(client, DEMO_TENANT)
+    second_amendment = await make_document(client, DEMO_TENANT, amends=base["id"])
+    await make_ready(client, DEMO_TENANT, second_amendment["id"])
+
+    first = await client.post(
+        f"/agreements/{base['id']}/change-report", json=body(amended["id"]), headers=headers
+    )
+    exceeded = await client.post(
+        f"/agreements/{base['id']}/change-report",
+        json=body(second_amendment["id"]),
+        headers=headers,
+    )
+
+    assert first.status_code == 202
+    assert exceeded.status_code == 429
