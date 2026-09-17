@@ -26,8 +26,9 @@ _Avoid_: customer, org, account
 
 **Demo Tenant**:
 The published sandbox tenant (dedicated UUID, credentials in the README) where
-visitors try the product under a reduced hourly budget, on seeded artifacts.
-Not a sales funnel and not the operator's tenant.
+visitors try the product under a reduced hourly budget, on artifacts they
+upload themselves.
+_Not a sales funnel and not the operator's tenant._
 _Avoid_: trial tenant, sandbox (bare), test tenant
 
 ### Ingesting

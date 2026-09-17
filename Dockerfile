@@ -7,7 +7,6 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-install-project --no-dev
 COPY app ./app
 COPY migrations ./migrations
-COPY scripts ./scripts
 COPY alembic.ini ./
 
 # Runtime stage: venv + code only, non-root, no build tooling.
@@ -19,7 +18,6 @@ WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/app ./app
 COPY --from=builder /app/migrations ./migrations
-COPY --from=builder /app/scripts ./scripts
 COPY --from=builder /app/alembic.ini ./
 ENV PATH="/app/.venv/bin:$PATH"
 USER appuser
