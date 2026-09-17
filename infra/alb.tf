@@ -26,8 +26,10 @@ locals {
   cert_validation_records = {
     for dvo in aws_acm_certificate.main.domain_validation_options :
     dvo.domain_name => {
-      name  = dvo.resource_record_name
-      value = dvo.resource_record_value
+      # Cloudflare stores record name/content without trailing dots; ACM's
+      # record_name/record_value carry them, which loops every plan.
+      name  = trimsuffix(dvo.resource_record_name, ".")
+      value = trimsuffix(dvo.resource_record_value, ".")
     }
   }
 }
