@@ -364,6 +364,17 @@ async def run_next_change_report_job(
                     if change.amended_span is not None
                     else None
                 ),
+                # The changed wording itself, so the report is self-contained
+                # and snapshot-consistent (docs/w7-decisions.md): the UI never
+                # fetches parsed text and never re-slices a live document.
+                "base_excerpt": (
+                    _excerpt(base_text, change.base_span) if change.base_span is not None else None
+                ),
+                "amended_excerpt": (
+                    _excerpt(amended_text, change.amended_span)
+                    if change.amended_span is not None
+                    else None
+                ),
                 "description": explanation.description,
                 "severity": explanation.severity.value,
                 "impacts": change_impacts,

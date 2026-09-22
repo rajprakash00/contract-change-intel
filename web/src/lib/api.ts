@@ -139,6 +139,10 @@ export function createApi(getAccessToken: TokenGetter) {
       return request<ReviewItemsResponse>(`/review-items${suffix}`);
     },
 
+    getReviewItem(itemId: string) {
+      return request<ReviewItemRead>(`/review-items/${itemId}`);
+    },
+
     resolveReviewItem(itemId: string, disposition: Disposition, correctedValues?: object) {
       return request<ReviewItemRead>(`/review-items/${itemId}/disposition`, {
         method: "POST",

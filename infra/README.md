@@ -68,13 +68,11 @@ Then:
    `gh workflow run deploy` — pushes both images (sha tags), runs the
    migration run-task (`alembic upgrade head`), rolls all services,
    and waits for stability.
-8. **Demo**: scale the worker to 1, exercise the flow in the UI (upload →
-   ingest → extract → change report):
-   ```sh
-   aws ecs update-service --cluster cci-prod --service cci-prod-worker \
-     --task-definition cci-prod-worker --desired-count 1
-   ```
-   Scale back: same command with `--desired-count 0`.
+8. **Demo**: while the portfolio link is published, `api`, `ui`, and
+   `worker` all run at desired 1 (ADR-012) — `scripts/demo-up.sh` scales
+   them up, waits for steady state, and prints the URL and credentials;
+   `scripts/demo-down.sh` closes the window. The worker's return to
+   idle-at-zero waits for the queue-depth autoscaling in W7·B.
    `evals/seed_fixtures.py` is local-stack only (local `.env` DATABASE_URL +
    local data dir) — prod seeding was deliberately skipped; evals run
    against the local fixtures, prod demos use manual uploads.
@@ -84,11 +82,15 @@ Then:
 `terraform apply` (if vars changed) → `gh workflow run deploy` → fixture
 re-seed if the DB was torn down.
 
-## Idle / teardown (decision #11)
+## Idle / teardown (decision #11, ADR-012)
+
+While the portfolio link is published, run `scripts/demo-up.sh` and leave
+the services at 1. At the end of the window:
 
 ```sh
+scripts/demo-down.sh            # api/ui/worker to zero; RDS + ALB still bill
 terraform apply -var=api_desired_count=0 -var=ui_desired_count=0 \
-  -var=worker_desired_count=0   # idle at zero; tasks bill nothing
+  -var=worker_desired_count=0   # keep Terraform state aligned with the scripts
 terraform destroy               # end of demo window
 ```
 

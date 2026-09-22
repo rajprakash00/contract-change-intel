@@ -178,6 +178,23 @@ Pending: commit + `gh workflow run deploy` (rolls SENTRY_DSN + LOG_FORMAT
 into the api; worker on next scale-up), `NEXT_PUBLIC_SENTRY_DSN` +
 `NEXT_PUBLIC_SENTRY_ENVIRONMENT=prod` repo vars for the UI build.
 
+· W7·A showcase/UI (2026-09-22, `docs/w7-decisions.md`, ADR-012): the
+landing page embeds a real **Sample Report** (committed artifact regenerated
+by `scripts/make_sample_report.py` from a live pipeline run; CUAD text,
+CC BY 4.0) and shows the demo credentials with a "Try the demo"
+`login_hint` prefill; report Changes gained `base_excerpt` /
+`amended_excerpt` (snapshot-consistent, no parsed-text fetch) and the report
+view was rebuilt around them (severity filter + groups, document links,
+copy-as-Markdown, print stylesheet, real loading/error states); the review
+queue gained `/review-items/{id}` and a structured edit dialog (raw JSON only
+for unknown payload shapes); dark mode is a real toggle (next-themes),
+header responsive, skip link + `aria-current`; `scripts/demo-up.sh` /
+`demo-down.sh` are the demo lifecycle (api/ui/worker at 1 while the
+portfolio link is published); `web/PRODUCT.md` + `web/DESIGN.md` ground the
+design work. Tests: 379 backend green on a scratch DB (the dev DB's residue
+flakes the first local run, per the gotcha below), 32 web unit tests,
+web lint/tsc/build clean.
+
 `OPENAI_API_KEY` live and verified end to end; the 6 CUAD fixtures are
 ingested in the dev DB under the eval tenant.
 
@@ -202,12 +219,21 @@ ruff/mypy clean; 376 integration+unit tests green.
 
 ## Next
 
-W6·B executed end to end: owner prerequisites → live deploy → full-flow
-UI smoke against `https://change-report.byraj.dev` (done 2026-09-11;
-runbook §First deploy now documents the counts-before-deploy step).
-Remaining lifecycle: idle-at-zero or `terraform destroy` at the end of
-the demo window. Deferred: load tests, retention, prod CUAD seeding (deliberately skipped — evals stay on the
-local stack), same-sha deploy rerun guard.
+W7 plan settled 2026-09-22 (`docs/w7-decisions.md`, ADR-012). Order is
+showcase-first: **W7·A showcase/UI** (Sample Report on the landing page +
+Try-the-demo prefilled credentials, report payload before/after excerpts +
+view redesign, review structured edit, responsive/dark/a11y, demo-up/down
+scripts, api/ui/worker at 1 while the portfolio link is published) →
+**W7·B reliability/latency** (stage timing + alarms + worker autoscale, lease
+heartbeat/timeout/backoff, change-report active-job guard, atomic review-item
+routing, bounded parallel impact mapping + shared LLM client, load harness
+with an HTML report) → **W7·C evals/determinism** (live eval gate workflow +
+expanded goldens + stability@3 + LLM-judge + adversarial task; provenance and
+replay). W8 candidates: Redis limiter, retention/PII, Playwright e2e, OTel
+trace export, LegalBench-RAG-mini anchor, `favorability`, anonymous demo
+sessions. Owner prerequisite: `OPENAI_API_KEY` repo secret for the eval
+workflow. Same-sha deploy rerun guard stays a chore for the next
+`deploy.yml` touch.
 
 ## Gotchas
 
