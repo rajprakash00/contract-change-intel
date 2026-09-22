@@ -74,8 +74,9 @@ answers 503, it does not run open.
 
 Terraform in `infra/` provisions AWS ECS Fargate, RDS PostgreSQL 17
 (pgvector), EFS, and the ALB edge. `infra/README.md` is the runbook.
-The stack runs idle-at-zero; CI builds the images and runs migrations
-as a one-off task.
+CI builds the images and runs migrations as a one-off task;
+`scripts/demo-up.sh` / `scripts/demo-down.sh` open and close the demo
+window (ADR-012).
 
 ## Evaluation
 

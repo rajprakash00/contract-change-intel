@@ -3,6 +3,7 @@
 import { Auth0Provider } from "@auth0/auth0-react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as Sentry from "@sentry/browser";
+import { ThemeProvider } from "next-themes";
 import { useEffect, useMemo, useState } from "react";
 
 import { ApiContextProvider } from "@/lib/api-context";
@@ -91,5 +92,11 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
     );
   }, [authEnabled, children]);
 
-  return <QueryClientProvider client={queryClient}>{app}</QueryClientProvider>;
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+        {app}
+      </ThemeProvider>
+    </QueryClientProvider>
+  );
 }

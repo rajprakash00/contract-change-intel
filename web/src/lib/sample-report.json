@@ -1,0 +1,97 @@
+{
+  "generated_at": "2026-09-22T14:18:03.024917+00:00",
+  "base_filename": "content-license-agreement.txt",
+  "amended_filename": "content-license-amendment.txt",
+  "changes": [
+    {
+      "kind": "modified",
+      "impacts": [
+        {
+          "owner": "LICENSOR",
+          "clause_ref": "2.2",
+          "confidence": 0.9,
+          "description": "LICENSOR shall deliver Content according to the specifications set by plan_b or to be agreed between the Parties in writing."
+        }
+      ],
+      "severity": "medium",
+      "base_span": {
+        "char_end": 326,
+        "char_start": 162
+      },
+      "clause_ref": "2.2",
+      "description": "The delivery timeline for the Content has been modified to require delivery in accordance with the specifications set by plan_b within a specified timeframe of 30 days.",
+      "amended_span": {
+        "char_end": 347,
+        "char_start": 162
+      },
+      "base_excerpt": "2.2 LICENSOR shall deliver Content according to the specifications\n\n(for example formats, file sizes) set by plan_b or to be agreed\n\nbetween the Parties in writing.",
+      "amended_excerpt": "2.2 LICENSOR shall deliver Content in accordance with the specifications\n\n(for example formats, file sizes) set by plan_b or to be agreed\n\nbetween the Parties in writing within 30 days."
+    },
+    {
+      "kind": "removed",
+      "impacts": [
+        {
+          "owner": "LICENSOR",
+          "clause_ref": "2.3",
+          "confidence": 1.0,
+          "description": "LICENSOR grants plan_b the right to produce, market and distribute Content to End Users through its own and its partner's platform for the term of this Agreement."
+        }
+      ],
+      "severity": "high",
+      "base_span": {
+        "char_end": 540,
+        "char_start": 328
+      },
+      "clause_ref": "2.3",
+      "description": "The clause granting plan_b the right to produce, market, and distribute Content to End Users has been removed, which could significantly impact plan_b's operational capabilities and revenue generation opportunities.",
+      "amended_span": null,
+      "base_excerpt": "2.3 LICENSOR grants plan_b for the term of this Agreement the right\n\nto produce, market and distribute Content to End Users (in the\n\nterritory specified in appendix 2) through its own and its partner's\n\nplatform.",
+      "amended_excerpt": null
+    },
+    {
+      "kind": "added",
+      "impacts": [
+        {
+          "owner": "LICENSOR",
+          "clause_ref": "2.1",
+          "confidence": 0.1,
+          "description": "LICENSOR shall make a first delivery of Content to plan_b within 14 days after the signing of this Agreement unless separately agreed between the Parties."
+        },
+        {
+          "owner": "LICENSOR",
+          "clause_ref": "2.2",
+          "confidence": 0.1,
+          "description": "LICENSOR shall deliver Content according to the specifications set by plan_b or to be agreed between the Parties in writing."
+        },
+        {
+          "owner": "LICENSOR",
+          "clause_ref": "2.3",
+          "confidence": 0.0,
+          "description": "LICENSOR grants plan_b the right to produce, market and distribute Content to End Users through its own and its partner's platform for the term of this Agreement."
+        },
+        {
+          "owner": "plan_b",
+          "clause_ref": "3.1",
+          "confidence": 0.0,
+          "description": "plan_b will distribute Content to End Users in the Territory through its distribution channels."
+        },
+        {
+          "owner": "plan_b",
+          "clause_ref": "3.2",
+          "confidence": 0.0,
+          "description": "plan_b shall use reasonable commercial efforts to market and stimulate interest in the Content with its customers."
+        }
+      ],
+      "severity": "medium",
+      "base_span": null,
+      "clause_ref": "2.9",
+      "description": "A new clause has been added requiring plan_b to pay the LICENSOR within 30 days of each delivery, establishing a clear payment term that was not previously specified.",
+      "amended_span": {
+        "char_end": 659,
+        "char_start": 597
+      },
+      "base_excerpt": null,
+      "amended_excerpt": "2.9 plan_b shall pay LICENSOR within 30 days of each delivery."
+    }
+  ]
+}

@@ -62,6 +62,10 @@ export interface Change {
   clause_ref: string | null;
   base_span: ChangeSpan | null;
   amended_span: ChangeSpan | null;
+  // Changed wording, snapshotted at generation time (W7·A). Optional because
+  // reports created before the field landed lack it.
+  base_excerpt?: string | null;
+  amended_excerpt?: string | null;
   description: string;
   severity: "low" | "medium" | "high";
   impacts: ChangeImpact[];

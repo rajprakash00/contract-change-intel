@@ -393,9 +393,62 @@ class TestRunNextChangeReportJob:
         assert change["clause_ref"] == "2.1"
         assert change["base_span"] is not None
         assert change["amended_span"] is not None
+        assert change["base_excerpt"] == BASE_TEXT
+        assert change["amended_excerpt"] == AMENDED_TEXT
         assert change["description"] == "The delivery window doubles."
         assert change["severity"] == "high"
         assert change["impacts"] == [], "no base obligations extracted, so no impacts"
+
+    async def test_added_and_removed_changes_carry_one_sided_excerpts(self) -> None:
+        base_text = (
+            "2.1 Delivery\n\nLICENSOR shall deliver within 14 days."
+            "\n\n2.2 Term\n\nThe term is one year."
+        )
+        amended_text = (
+            "2.1 Delivery\n\nLICENSOR shall deliver within 14 days."
+            "\n\n2.3 Renewal\n\nRenewal is automatic."
+        )
+        explanations = json.dumps(
+            {
+                "changes": [
+                    {"index": 0, "description": "The term clause is gone.", "severity": "high"},
+                    {
+                        "index": 1,
+                        "description": "Automatic renewal is added.",
+                        "severity": "medium",
+                    },
+                ]
+            }
+        )
+        tenant_id = uuid.uuid4()
+        base = await make_document(tenant_id=tenant_id, text=base_text, parsed=True)
+        amended = await make_document(
+            tenant_id=tenant_id, text=amended_text, parsed=True, amends=base
+        )
+        await complete_extraction(base)
+        await complete_extraction(amended)
+        async with db.get_sessionmaker()() as session:
+            job = await enqueue_change_report(
+                session,
+                tenant_id=base.tenant_id,
+                base_document_id=base.id,
+                amended_document_id=amended.id,
+            )
+
+        async with (
+            fake_llm_client(explanations) as (llm, _),
+            db.get_sessionmaker()() as session,
+        ):
+            await run_next_change_report_job(session, llm=llm, review_threshold=0.5)
+
+        async with db.get_sessionmaker()() as session:
+            done = await get_change_report_job(session, tenant_id=base.tenant_id, job_id=job.id)
+        changes = done.result["changes"]
+        assert [change["kind"] for change in changes] == ["removed", "added"]
+        assert changes[0]["base_excerpt"] == "2.2 Term\n\nThe term is one year."
+        assert changes[0]["amended_excerpt"] is None
+        assert changes[1]["base_excerpt"] is None
+        assert changes[1]["amended_excerpt"] == "2.3 Renewal\n\nRenewal is automatic."
 
     async def test_completed_report_attaches_per_change_impacts_with_confidence(self) -> None:
         base, amended = await ready_pair_with_base_obligation()

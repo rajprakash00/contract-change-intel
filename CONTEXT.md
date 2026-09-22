@@ -83,6 +83,28 @@ The per-Amendment output: extracted Obligations, explained Changes, Impact map,
 Citations and Confidence, flagged Review Items.
 _Avoid_: delta, comparison, impact analysis, report
 
+**Sample Report**:
+A Change Report snapshot generated from a real run and shown on the landing page to
+signed-out visitors; never a mockup.
+_Avoid_: demo report, mockup
+
+### Report reliability
+
+**Stable Report**:
+A Change Report whose Changes, Impacts, and Severities agree with a re-run on the same
+inputs within the evaluation tolerance.
+_Avoid_: deterministic report (bare), consistent report
+
+**Replayable Report**:
+A Change Report that can be regenerated from its recorded inputs and Provenance without
+new model calls.
+_Avoid_: cached report, deterministic report (bare)
+
+**Provenance**:
+The recorded origin of a Change Report: the model, prompt version, sampling parameters,
+and input fingerprints that produced it.
+_Avoid_: metadata, trace
+
 ### Review
 
 **Confidence**:

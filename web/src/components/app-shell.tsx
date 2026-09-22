@@ -5,11 +5,13 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { FileDiff, LogOut, ScrollText } from "lucide-react";
 
+import { DEMO_ACCOUNT } from "@/lib/demo";
 import { roleFromClaims } from "@/lib/roles";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { BrandMark } from "@/components/brand";
 import { LandingPage } from "@/components/landing";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 const NAV_ITEMS = [
   { href: "/", label: "Documents", icon: FileDiff },
@@ -38,7 +40,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     );
   }
   if (!isAuthenticated) {
-    return <LandingPage onSignIn={() => loginWithRedirect()} />;
+    return (
+      <LandingPage
+        onSignIn={() => loginWithRedirect()}
+        // ADR-012: prefill the published demo account on the Auth0 screen.
+        onTryDemo={() =>
+          loginWithRedirect({ authorizationParams: { login_hint: DEMO_ACCOUNT.email } })
+        }
+      />
+    );
   }
 
   return (
@@ -50,13 +60,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             className="flex items-center gap-2.5 font-heading text-lg font-semibold tracking-tight"
           >
             <BrandMark className="size-7 rounded-md" />
-            Contract Change-Impact Intelligence
+            <span className="hidden sm:inline">Contract Change-Impact Intelligence</span>
           </Link>
           <nav className="flex items-center gap-1">
             {NAV_ITEMS.map((item) => (
               <Link
                 key={item.href}
                 href={item.href}
+                aria-current={pathname === item.href ? "page" : undefined}
                 className={
                   pathname === item.href
                     ? "rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground"
@@ -67,7 +78,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </Link>
             ))}
           </nav>
-          <div className="ml-auto flex items-center gap-3">
+          <div className="ml-auto flex items-center gap-2">
+            <ThemeToggle />
             {isLoading ? null : isAuthenticated ? (
               <>
                 {role && <Badge variant="secondary">{role}</Badge>}
@@ -90,7 +102,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </header>
-      <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-10">{children}</main>
+      <main id="main-content" className="mx-auto w-full max-w-6xl flex-1 px-6 py-10">
+        {children}
+      </main>
     </div>
   );
 }
